@@ -20,8 +20,9 @@ compris) sans rien modifier sur ce PC. Lire dans l'ordre :
 - `image/fichiers/usr/local/sbin/fabrique-cle-premier-demarrage` — service de premier démarrage (tty1, avant SDDM)
 - `image/tester-image.sh` — test QEMU/OVMF Secure Boot + clé USB + inspection hors ligne
 - `image/config-exemple.txt` — format du fichier de personnalisation (contrat entre l'application et l'image)
-- `app/` — application Rust (à créer)
+- `app/` — application Rust egui (Windows + Linux) : `cargo test` dans `app/` ; modules décrits dans `architecture.md` § 4
 - `.github/workflows/image.yml` — construction + test à chaque push sur `image/**`, release sur étiquette `v*`
+- `.github/workflows/app.yml` — tests + `.exe` Windows + AppImage Linux à chaque push sur `app/**`, joints à la release sur `v*`
 
 ## Règles
 

@@ -1,0 +1,114 @@
+# Compile et teste l'application Fabrique-Clé pour Windows (.exe) et Linux (AppImage + binaire)
+# et, sur une étiquette v*, les joint à la release (la même que l'image).
+name: Application
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths: ['app/**', '.github/workflows/app.yml']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FABRIQUE_CLE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+
+jobs:
+  linux:
+    # glibc 2.35 : le binaire fonctionne aussi sur les distributions plus récentes.
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Rust stable
+        run: rustup update stable --no-self-update && rustup default stable
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: Compilation
+        run: cargo build --release --locked
+
+      - name: AppImage
+        run: |
+          set -eu
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          mkdir -p AppDir/usr/bin
+          cp target/release/fabrique-cle AppDir/usr/bin/
+          cp paquet/fabrique-cle.desktop paquet/fabrique-cle.png AppDir/
+          ln -s usr/bin/fabrique-cle AppDir/AppRun
+          mkdir -p ../publier
+          # Pas de FUSE sur le runner : appimagetool s'extrait lui-même.
+          APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 ./appimagetool AppDir ../publier/fabrique-cle-linux-x86_64.AppImage
+          cp target/release/fabrique-cle ../publier/fabrique-cle-linux-x86_64
+          ls -l ../publier
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: fabrique-cle-linux
+          path: publier/
+          retention-days: 14
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Rust stable
+        run: rustup update stable --no-self-update; rustup default stable
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: Compilation
+        run: cargo build --release --locked
+
+      - name: Préparer
+        shell: bash
+        run: |
+          mkdir -p ../publier
+          cp target/release/fabrique-cle.exe ../publier/fabrique-cle-windows.exe
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: fabrique-cle-windows
+          path: publier/
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: publier
+          merge-multiple: true
+
+      - name: Joindre à la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          cd publier
+          sha256sum fabrique-cle-* > fabrique-cle-applications.sha256
+          # Le workflow de l'image peut créer la release en même temps : réessayer.
+          for i in 1 2 3 4 5; do
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
+            gh release create "$GITHUB_REF_NAME" --title "Fabrique-Clé $GITHUB_REF_NAME" \
+              --notes "Image Debian 13 + KDE Plasma (léger), testée dans QEMU avec Secure Boot, et application Fabrique-Clé (Windows, Linux)." \
+              && break || sleep 10
+          done
+          gh release upload "$GITHUB_REF_NAME" * --clobber

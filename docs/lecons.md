@@ -64,6 +64,18 @@
 - `lsblk -no PKNAME <partition>` liste aussi les enfants (dm-0…) : utiliser `lsblk -dno PKNAME`.
 - Le test doit s'éteindre tout seul même en cas d'échec (sinon 30 min de délai perdues) et rapporter le journal.
 
+## Application
+
+- **Sel SHA-512 crypt de 16 caractères maximum.** La crate `sha-crypt` (0.6) encode par défaut un sel
+  de 22 caractères ; la glibc le tronque à 16 et renvoie une chaîne différente de celle stockée :
+  connexion impossible. Sel de 12 octets (= 16 caractères) ; vérifié avec `crypt(3)` de la glibc.
+- `bmaptool create` cite des balises (`<BlocksCount>`…) dans ses commentaires XML : les retirer avant analyse.
+- Windows : lectures/écritures d'un disque brut alignées sur le secteur → `fatfs` passe par une fenêtre
+  à blocs de 4096 octets (`esp.rs`).
+- AppImage + pkexec : root ne peut pas lire le montage FUSE de l'AppImage → relancer `$APPIMAGE`.
+- Windows : une application élevée (administrateur) ne reçoit pas le glisser-déposer de l'Explorateur
+  (UIPI) → bouton « Parcourir… » (crate `rfd`).
+
 ## Essais de distributions (historique)
 
 - PorteuX 2.8 COSMIC : fenêtres et menus qui ne s'ouvraient pas → passage au module KDE, fonctionnel.
