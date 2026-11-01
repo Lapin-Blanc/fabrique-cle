@@ -265,8 +265,12 @@ chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Opt
   firmware-linux firmware-misc-nonfree \
   firmware-intel-graphics firmware-intel-misc firmware-mediatek firmware-nvidia-graphics \
   firmware-amd-graphics firmware-iwlwifi firmware-realtek firmware-atheros \
-  firmware-brcm80211 firmware-sof-signed
-for p in kde-standard kde-full task-kde-desktop; do
+  firmware-brcm80211 firmware-sof-signed \
+  fonts-noto-extra- fonts-noto-cjk-extra- fonts-noto-ui-extra-
+# (« paquet- » = ne pas installer.) Ces trois paquets, recommandés via fonts-noto, n'apportent que des
+# graisses et largeurs supplémentaires (~600 Mio) : toutes les écritures restent couvertes par
+# fonts-noto-core, fonts-noto-cjk, fonts-noto-ui-core et fonts-noto-mono.
+for p in kde-standard kde-full task-kde-desktop fonts-noto-extra fonts-noto-cjk-extra fonts-noto-ui-extra; do
   if chroot "$MNT" dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok'; then
     echo "ERREUR : $p installé"; exit 1
   fi
