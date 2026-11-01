@@ -44,7 +44,14 @@ tuer_chroot() {
 demonter() {
   tuer_chroot
   umount -R "$MNT"
-  vgchange -an "$VG" >/dev/null
+  # udev sonde les périphériques juste après le démontage : on attend qu'il les relâche
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    udevadm settle || true
+    vgchange -an "$VG" >/dev/null 2>&1 && break
+    [ "$i" -eq 10 ] && { grep -l "$VG" /proc/[0-9]*/mountinfo; fuser -vm "/dev/$VG/root"; dmsetup info -c; vgchange -an "$VG"; }
+    sleep 3
+  done
   cryptsetup close "$CRYPT"
   losetup -d "$LOOP"; LOOP=
 }
