@@ -15,7 +15,8 @@
 - [x] Service de premier démarrage (config.txt ou questions, rechiffrement, agrandissement, compte)
 - [x] `tester-image.sh` : test complet réussi (Secure Boot, USB, NVRAM vierge, 14 vérifications)
 - [x] Workflow complet vert (construction, test, compression, artefact) — run 41296826593, 11 min 34 s
-- [ ] Première release `v2026.11`
+- [x] Première release `v2026.11` (pré-version ; les releases sont créées en pré-version, à promouvoir
+      après essai sur vrai matériel)
 
 ## Taille de l'image compressée — traité (7,5 Go → < 1,9 Go, un seul fichier)
 
@@ -68,8 +69,10 @@ graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `
 - [x] Écriture brute (Linux : assistant pkexec ; Windows : PhysicalDrive + verrouillage des volumes)
 - [x] Écriture de `config.txt` dans la FAT de p1 (crate `fatfs`) ; hachage `sha-crypt` (compatible glibc)
 - [x] Workflow `app.yml` : builds Windows (`.exe`) et Linux (AppImage), attachés à la release
-- [ ] **Essai sur vraie clé** : Linux (Zorin, pkexec) puis Windows 10/11 (verrouillage des volumes, UAC)
-- [ ] Essai bout en bout : clé écrite par l'application → premier démarrage qui lit `config.txt`
+- [x] Essai bout en bout sur vraie clé (SSD SSK USB) : écriture par l'application → premier démarrage
+      (config.txt lu, questions à l'écran) → clé fonctionnelle sur le HP ProBook 455 — 2026-11-01
+- [ ] Vérifier explicitement les deux plateformes d'écriture : Windows (UAC, verrouillage des volumes)
+      et Linux (Zorin, assistant pkexec)
 - [ ] Icône de fenêtre et d'exécutable Windows ; reprise d'un téléchargement interrompu
 - [ ] Signature de code Windows (SmartScreen) : à évaluer (payant)
 
