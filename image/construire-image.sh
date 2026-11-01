@@ -8,9 +8,11 @@
 #
 # Disposition (identique à la clé SSK validée) :
 #   p1 ESP 512 Mio FAT32 « FABCLE »  |  p2 /boot 1 Gio ext4  |  p3 LUKS2 -> LVM fabcle/root ext4
-# Le volume LUKS est ouvert par une clé temporaire incluse dans l'initramfs : le service de premier
-# démarrage la remplace par la phrase de l'élève et rechiffre le volume (la clé maîtresse de l'image
-# publiée est publique).
+# Le volume LUKS2 de l'image est créé SANS chiffrement réel (cipher_null) : son contenu reste en
+# clair, donc compressible (un volume chiffré ne se compresse pas : 7,5 Go au lieu de ~2 Go). Il est
+# ouvert par une clé temporaire incluse dans l'initramfs ; si chiffrer=oui, le service de premier
+# démarrage le chiffre en ligne en AES-XTS (nouvelle clé maîtresse, propre à chaque clé USB), puis
+# remplace la clé temporaire par la phrase de l'élève.
 set -euo pipefail
 
 ICI=$(dirname "$(readlink -f "$0")")
@@ -35,6 +37,10 @@ done
 journal() { printf '\n=== %s ===\n' "$*"; }
 
 MNT=$(mktemp -d)
+# Cache APT HORS de l'image : les .deb téléchargés (déjà compressés) laisseraient, une fois effacés,
+# ~1,5 Gio de blocs libres incompressibles que fstrim ne rend pas tous au fichier image
+mkdir -p "$(dirname "$SORTIE")"
+CACHE=$(mktemp -d -p "$(dirname "$SORTIE")" cache-apt.XXXXXX)
 LOOP=
 # Processus lancés dans le chroot par les scripts des paquets (ils bloqueraient le démontage)
 tuer_chroot() {
@@ -65,6 +71,7 @@ nettoyer() {
   cryptsetup close "$CRYPT" 2>/dev/null
   [ -n "$LOOP" ] && losetup -d "$LOOP"
   rmdir "$MNT" 2>/dev/null
+  rm -rf "$CACHE"
 }
 trap nettoyer EXIT
 
@@ -83,11 +90,17 @@ udevadm settle || true
 for i in 1 2 3; do [ -b "${LOOP}p$i" ] || partx -a "$LOOP"; done
 P1=${LOOP}p1 P2=${LOOP}p2 P3=${LOOP}p3
 
-journal "LUKS2 (clé temporaire) -> LVM -> systèmes de fichiers"
+journal "LUKS2 cipher_null (clé temporaire) -> LVM -> systèmes de fichiers"
 CLE_TMP="${SORTIE%.img}.key"
 head -c 64 /dev/urandom > "$CLE_TMP"
 chmod 600 "$CLE_TMP"
-cryptsetup luksFormat --batch-mode --type luks2 --label fabcle --key-file "$CLE_TMP" "$P3"
+# cipher_null : données écrites en clair (compressibles) ; l'emplacement de clé, lui, reçoit le
+# chiffrement par défaut de cryptsetup
+cryptsetup luksFormat --batch-mode --type luks2 --label fabcle --cipher cipher_null-ecb \
+  --key-file "$CLE_TMP" "$P3"
+ENTETE=$(cryptsetup luksDump "$P3")
+grep -E '^\s+cipher:' <<<"$ENTETE"
+grep -qE '^\s+cipher:\s+cipher_null' <<<"$ENTETE" || { echo "ERREUR : volume non cipher_null"; exit 1; }
 cryptsetup open --allow-discards --key-file "$CLE_TMP" "$P3" "$CRYPT"
 pvcreate -q "/dev/mapper/$CRYPT"
 vgcreate -q "$VG" "/dev/mapper/$CRYPT"
@@ -106,6 +119,8 @@ rmdir "$MNT/lost+found"
 # ---------------------------------------------------------------------------
 journal "Système de base (mmdebstrap)"
 mmdebstrap --variant=important --components="$COMPOSANTS" \
+  --setup-hook="mkdir -p \"\$1/var/cache/apt/archives\" && mount --bind '$CACHE' \"\$1/var/cache/apt/archives\"" \
+  --customize-hook='umount "$1/var/cache/apt/archives"' \
   --include=locales,console-setup,keyboard-configuration,ca-certificates \
   "$SUITE" "$MNT" "$MIROIR"
 
@@ -160,6 +175,8 @@ MODULES=most
 KEYMAP=y
 RESUME=none
 EOF
+# L'initramfs de l'image doit savoir ouvrir le volume cipher_null (inoffensif après chiffrement)
+grep -qx crypto_null "$MNT/etc/initramfs-tools/modules" 2>/dev/null || echo crypto_null >> "$MNT/etc/initramfs-tools/modules"
 
 cat > "$MNT/etc/default/keyboard" <<'EOF'
 XKBMODEL="pc105"
@@ -211,6 +228,8 @@ EOF
 # ---------------------------------------------------------------------------
 journal "Paquets : noyau, chiffrement, GRUB, Plasma minimal, firmwares"
 chroot "$MNT" locale-gen
+mkdir -p "$CACHE/partial"
+mount --bind "$CACHE" "$MNT/var/cache/apt/archives"
 chroot "$MNT" apt-get update -qq
 chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold \
   linux-image-amd64 cryptsetup cryptsetup-initramfs lvm2 \
@@ -257,6 +276,7 @@ chroot "$MNT" update-grub
 # ---------------------------------------------------------------------------
 journal "Nettoyage (identité unique par clé)"
 chroot "$MNT" apt-get clean
+umount "$MNT/var/cache/apt/archives"
 rm -f "$MNT/usr/sbin/policy-rc.d"
 : > "$MNT/etc/resolv.conf"
 : > "$MNT/etc/machine-id"
@@ -271,14 +291,17 @@ cmp "$MNT/boot/efi/EFI/BOOT/BOOTX64.EFI" "$MNT/boot/efi/EFI/debian/shimx64.efi" 
 cmp "$MNT/boot/efi/EFI/BOOT/grubx64.efi" "$MNT/boot/efi/EFI/debian/grubx64.efi" && echo "grubx64.efi identique à EFI/debian"
 [ ! -e "$MNT/boot/efi/EFI/BOOT/fbx64.efi" ] && echo "pas de fbx64.efi dans EFI/BOOT"
 df -h "$MNT" "$MNT/boot" "$MNT/boot/efi"
+cryptsetup status "$CRYPT" | grep -E 'cipher|keysize'
 
 # Blocs libres rendus au fichier image (image creuse, meilleure compression)
 fstrim -v "$MNT/boot/efi" || true
 fstrim -v "$MNT/boot" || true
 fstrim -v "$MNT" || true
+sync
 
 journal "Démontage"
 demonter
 cryptsetup status "$CRYPT" >/dev/null 2>&1 && { echo "ERREUR : volume encore ouvert"; exit 1; }
 
+echo "Blocs alloués dans le fichier image : $(du -m "$SORTIE" | cut -f1) Mio"
 journal "Image prête : $SORTIE (clé temporaire de test : $CLE_TMP)"

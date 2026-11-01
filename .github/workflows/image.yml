@@ -61,8 +61,13 @@ jobs:
           bmaptool create fabrique-cle.img > fabrique-cle.img.bmap
           zstd -T0 -12 -q fabrique-cle.img -o fabrique-cle.img.zst
           sha256sum fabrique-cle.img.zst > fabrique-cle.img.zst.sha256
+          # Garde-fou : un volume chiffré dans l'image la rend incompressible (7,5 Go au lieu de ~2)
+          ZST=$(stat -c %s fabrique-cle.img.zst)
+          echo "Image compressée : $((ZST / 1000000)) Mo (données : $(du -m fabrique-cle.img | cut -f1) Mio)"
+          [ "$ZST" -lt 3000000000 ] || { echo "ERREUR : image compressée trop lourde"; exit 1; }
           mkdir -p ../publier
-          if [ "$(stat -c %s fabrique-cle.img.zst)" -gt 2000000000 ]; then
+          # Limite GitHub : 2 Gio par fichier de release ; marge de ~48 Mio
+          if [ "$ZST" -gt $((2000 * 1024 * 1024)) ]; then
             split -b 1900M -d -a 2 fabrique-cle.img.zst ../publier/fabrique-cle.img.zst.part
           else
             cp fabrique-cle.img.zst ../publier/
