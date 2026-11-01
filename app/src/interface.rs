@@ -5,6 +5,7 @@ use crate::config::{CLAVIERS, LANGUES, MOT_DE_PASSE_MIN, Personnalisation};
 use crate::disques::{self, Disque};
 use crate::releases::{self, Version};
 use crate::suivi::{ANNULE, Suivi};
+use crate::theme;
 use crate::travail::{self, Ecriture};
 use eframe::egui;
 use std::path::PathBuf;
@@ -84,6 +85,8 @@ pub struct Appli {
     confirmation: bool,
     travail: Option<Travail>,
     resultat: Option<Result<String, String>>,
+
+    icone: Option<egui::TextureHandle>,
 }
 
 fn charger_versions(ctx: &egui::Context) -> EtatVersions {
@@ -98,6 +101,14 @@ fn charger_versions(ctx: &egui::Context) -> EtatVersions {
 
 impl Appli {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        theme::appliquer(&cc.egui_ctx);
+        let icone = theme::icone().map(|(rgba, l, h)| {
+            cc.egui_ctx.load_texture(
+                "icone",
+                egui::ColorImage::from_rgba_unmultiplied([l as usize, h as usize], &rgba),
+                egui::TextureOptions::LINEAR,
+            )
+        });
         let mut a = Self {
             disques: Vec::new(),
             erreur_disques: None,
@@ -112,6 +123,7 @@ impl Appli {
             confirmation: false,
             travail: None,
             resultat: None,
+            icone,
         };
         a.detecter();
         a
@@ -245,211 +257,316 @@ impl Appli {
         }
     }
 
-    fn section(ui: &mut egui::Ui, titre: &str) {
-        ui.add_space(8.0);
-        ui.label(egui::RichText::new(titre).strong().size(15.0));
-        ui.separator();
+    /// Carte numérotée (« 1  Clé USB ») contenant une étape du formulaire.
+    fn carte<R>(
+        ui: &mut egui::Ui,
+        numero: u8,
+        titre: &str,
+        contenu: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> R {
+        let acc = theme::accent(ui);
+        egui::Frame::new()
+            .fill(theme::fond_carte(ui))
+            .stroke(egui::Stroke::new(1.0, theme::bord_carte(ui)))
+            .corner_radius(10)
+            .inner_margin(egui::Margin::symmetric(16, 14))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    // Pastille numérotée
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 12.0, acc);
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        numero.to_string(),
+                        egui::FontId::new(13.0, theme::gras()),
+                        egui::Color32::WHITE,
+                    );
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(titre).family(theme::gras()).size(16.0));
+                });
+                ui.add_space(6.0);
+                contenu(ui)
+            })
+            .inner
     }
 
-    fn ui_cle(&mut self, ui: &mut egui::Ui) {
-        Self::section(ui, "Clé USB");
-        ui.horizontal(|ui| {
-            let texte = self
-                .disque
-                .as_ref()
-                .map(|d| d.libelle())
-                .unwrap_or_else(|| {
-                    if self.disques.is_empty() {
-                        "Aucune clé USB détectée".into()
-                    } else {
-                        "Choisir…".into()
-                    }
-                });
-            egui::ComboBox::from_id_salt("disque")
-                .width(ui.available_width() - 90.0)
-                .selected_text(texte)
-                .show_ui(ui, |ui| {
-                    for d in &self.disques {
-                        ui.selectable_value(&mut self.disque, Some(d.clone()), d.libelle());
-                    }
-                });
-            if ui
-                .button("Actualiser")
-                .on_hover_text("Rechercher de nouveau les clés USB")
-                .clicked()
-            {
-                self.detecter();
-            }
-        });
-        if let Some(e) = &self.erreur_disques {
-            ui.colored_label(ui.visuals().error_fg_color, e);
-        }
-        if let Some(d) = &self.disque
-            && d.taille < 15_000_000_000
-        {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                "Clé de moins de 16 Go : l'image risque de ne pas tenir.",
-            );
-        }
+    /// Message encadré, teinté de la couleur donnée.
+    fn encadre(ui: &mut egui::Ui, couleur: egui::Color32, texte: &str) {
+        egui::Frame::new()
+            .fill(theme::teinte(couleur))
+            .stroke(egui::Stroke::new(1.0, couleur.gamma_multiply(0.6)))
+            .corner_radius(8)
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(egui::RichText::new(texte).color(couleur));
+            });
     }
 
-    fn ui_image(&mut self, ui: &mut egui::Ui) {
-        Self::section(ui, "Image");
+    fn ui_entete(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.radio_value(&mut self.mode, ModeImage::Publiee, "Version publiée :");
-            let mut recharger = false;
-            let mut erreur = None;
-            match &self.versions {
-                EtatVersions::Chargement(_) => {
-                    ui.spinner();
-                    ui.label("recherche des versions…");
-                }
-                EtatVersions::Erreur(e) => {
-                    ui.colored_label(ui.visuals().error_fg_color, "indisponible");
-                    recharger = ui.button("Réessayer").clicked();
-                    erreur = Some(e.clone());
-                }
-                EtatVersions::Pret(v) => {
-                    let texte = |x: &Version| match x.taille {
-                        Some(t) => format!("{} ({})", x.etiquette, crate::suivi::taille_lisible(t)),
-                        None => x.etiquette.clone(),
-                    };
-                    egui::ComboBox::from_id_salt("version")
-                        .selected_text(v.get(self.version).map(texte).unwrap_or_default())
-                        .show_ui(ui, |ui| {
-                            for (i, x) in v.iter().enumerate() {
-                                ui.selectable_value(&mut self.version, i, texte(x));
-                            }
-                        });
-                }
+            if let Some(t) = &self.icone {
+                ui.add(egui::Image::new(t).fit_to_exact_size(egui::vec2(44.0, 44.0)));
+                ui.add_space(6.0);
             }
-            if recharger {
-                self.versions = charger_versions(ui.ctx());
-            }
-            erreur
-        })
-        .inner
-        .map(|e| ui.label(egui::RichText::new(e).small().weak()));
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut self.mode, ModeImage::Locale, "Fichier :");
-            // Bouton à droite, champ dans l'espace restant.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Sous Windows, l'application tourne en administrateur : Windows interdit alors le
-                // glisser-déposer depuis l'Explorateur. Le bouton est le moyen principal.
-                if ui.button("Parcourir…").clicked() {
-                    let mut dialogue = rfd::FileDialog::new()
-                        .set_title("Choisir l'image Fabrique-Clé")
-                        .add_filter("Image Fabrique-Clé (.img.zst, .img)", &["zst", "img"])
-                        .add_filter("Tous les fichiers", &["*"]);
-                    let actuel = PathBuf::from(self.chemin_local.trim());
-                    if let Some(dossier) = actuel.parent().filter(|d| d.is_dir()) {
-                        dialogue = dialogue.set_directory(dossier);
-                    }
-                    if let Some(p) = dialogue.pick_file() {
-                        self.chemin_local = p.display().to_string();
-                        self.mode = ModeImage::Locale;
-                    }
-                }
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut self.chemin_local)
-                        .hint_text("chemin d'un fichier .img.zst")
-                        .desired_width(ui.available_width()),
-                );
-                if r.changed() {
-                    self.mode = ModeImage::Locale;
-                }
-                r.on_hover_text(
-                    "Image téléchargée à part (.img.zst ou .img) ; .bmap et .sha256 lus à côté s'ils existent.",
+            ui.vertical(|ui| {
+                ui.add_space(2.0);
+                ui.heading("Fabrique-Clé");
+                ui.label(
+                    egui::RichText::new("Votre clé USB Debian + KDE Plasma, prête à emporter")
+                        .weak(),
                 );
             });
         });
     }
 
-    fn ui_perso(&mut self, ui: &mut egui::Ui) {
-        Self::section(ui, "Personnalisation");
-        let p = &mut self.perso;
-        egui::Grid::new("perso").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("Identifiant :");
-            ui.add(egui::TextEdit::singleline(&mut p.identifiant).hint_text("ex. lucas").desired_width(220.0));
-            ui.end_row();
-
-            ui.label("Nom complet :");
-            ui.add(egui::TextEdit::singleline(&mut p.nom_complet).hint_text("ex. Lucas Dupont").desired_width(220.0));
-            ui.end_row();
-
-            ui.label("Mot de passe :");
-            ui.add(egui::TextEdit::singleline(&mut p.mot_de_passe).password(true).desired_width(220.0))
-                .on_hover_text(format!(
-                    "Au moins {MOT_DE_PASSE_MIN} caractères. Laisser vide : il sera demandé au premier démarrage."
-                ));
-            ui.end_row();
-
-            ui.label("Confirmation :");
-            ui.add(egui::TextEdit::singleline(&mut p.confirmation).password(true).desired_width(220.0));
-            ui.end_row();
-
-            ui.label("Nom de la machine :");
-            let proposition = crate::config::machine_par_defaut(p.identifiant.trim());
-            ui.add(egui::TextEdit::singleline(&mut p.machine).hint_text(proposition).desired_width(220.0));
-            ui.end_row();
-
-            ui.label("Clavier :");
-            egui::ComboBox::from_id_salt("clavier")
-                .selected_text(CLAVIERS[p.clavier].1)
-                .show_ui(ui, |ui| {
-                    for (i, c) in CLAVIERS.iter().enumerate() {
-                        ui.selectable_value(&mut p.clavier, i, c.1);
-                    }
-                });
-            ui.end_row();
-
-            ui.label("Langue :");
-            egui::ComboBox::from_id_salt("langue")
-                .selected_text(LANGUES[p.langue].1)
-                .show_ui(ui, |ui| {
-                    for (i, l) in LANGUES.iter().enumerate() {
-                        ui.selectable_value(&mut p.langue, i, l.1);
-                    }
-                });
-            ui.end_row();
+    fn ui_cle(&mut self, ui: &mut egui::Ui) {
+        Self::carte(ui, 1, "Clé USB", |ui| {
+            ui.horizontal(|ui| {
+                let texte = self
+                    .disque
+                    .as_ref()
+                    .map(|d| d.libelle())
+                    .unwrap_or_else(|| {
+                        if self.disques.is_empty() {
+                            "Aucune clé USB détectée — branchez-en une".into()
+                        } else {
+                            "Choisir la clé…".into()
+                        }
+                    });
+                let largeur = ui.available_width() - 110.0;
+                egui::ComboBox::from_id_salt("disque")
+                    .width(largeur)
+                    .selected_text(texte)
+                    .show_ui(ui, |ui| {
+                        for d in &self.disques {
+                            ui.selectable_value(&mut self.disque, Some(d.clone()), d.libelle());
+                        }
+                    });
+                if ui
+                    .add_sized([100.0, 30.0], egui::Button::new("Actualiser"))
+                    .on_hover_text("Rechercher de nouveau les clés USB")
+                    .clicked()
+                {
+                    self.detecter();
+                }
+            });
+            if let Some(e) = &self.erreur_disques {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            if let Some(d) = &self.disque
+                && d.taille < 15_000_000_000
+            {
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    "Clé de moins de 16 Go : l'image risque de ne pas tenir.",
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new("Tout son contenu sera effacé. 16 Go minimum ; un SSD USB est bien plus rapide.")
+                        .small()
+                        .weak(),
+                );
+            }
         });
-        ui.add_space(4.0);
-        ui.checkbox(&mut p.chiffrer, "Chiffrer la clé (recommandé)").on_hover_text(
-            "Une phrase secrète sera choisie au premier démarrage et demandée à chaque démarrage. \
-             Sans elle, les données de la clé sont perdues : notez-la !",
-        );
-        ui.checkbox(
-            &mut self.verifier,
-            "Vérifier la clé après l'écriture (relecture)",
-        );
     }
 
+    fn ui_image(&mut self, ui: &mut egui::Ui) {
+        Self::carte(ui, 2, "Système à installer", |ui| {
+            let erreur = ui
+                .horizontal(|ui| {
+                    ui.radio_value(&mut self.mode, ModeImage::Publiee, "Version publiée");
+                    let mut recharger = false;
+                    let mut erreur = None;
+                    match &self.versions {
+                        EtatVersions::Chargement(_) => {
+                            ui.spinner();
+                            ui.label(egui::RichText::new("recherche des versions…").weak());
+                        }
+                        EtatVersions::Erreur(e) => {
+                            ui.colored_label(ui.visuals().error_fg_color, "indisponible");
+                            recharger = ui.button("Réessayer").clicked();
+                            erreur = Some(e.clone());
+                        }
+                        EtatVersions::Pret(v) => {
+                            let texte = |x: &Version| match x.taille {
+                                Some(t) => format!(
+                                    "{}  ·  {}",
+                                    x.etiquette,
+                                    crate::suivi::taille_lisible(t)
+                                ),
+                                None => x.etiquette.clone(),
+                            };
+                            let r = egui::ComboBox::from_id_salt("version")
+                                .width(ui.available_width())
+                                .selected_text(v.get(self.version).map(texte).unwrap_or_default())
+                                .show_ui(ui, |ui| {
+                                    for (i, x) in v.iter().enumerate() {
+                                        ui.selectable_value(&mut self.version, i, texte(x));
+                                    }
+                                });
+                            if r.response.clicked() {
+                                self.mode = ModeImage::Publiee;
+                            }
+                        }
+                    }
+                    if recharger {
+                        self.versions = charger_versions(ui.ctx());
+                    }
+                    erreur
+                })
+                .inner;
+            if let Some(e) = erreur {
+                ui.label(egui::RichText::new(e).small().weak());
+            }
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut self.mode, ModeImage::Locale, "Fichier");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Sous Windows, l'application tourne en administrateur : Windows interdit alors
+                    // le glisser-déposer depuis l'Explorateur. Le bouton est le moyen principal.
+                    if ui.add_sized([100.0, 30.0], egui::Button::new("Parcourir…")).clicked() {
+                        let mut dialogue = rfd::FileDialog::new()
+                            .set_title("Choisir l'image Fabrique-Clé")
+                            .add_filter("Image Fabrique-Clé (.img.zst, .img)", &["zst", "img"])
+                            .add_filter("Tous les fichiers", &["*"]);
+                        let actuel = PathBuf::from(self.chemin_local.trim());
+                        if let Some(dossier) = actuel.parent().filter(|d| d.is_dir()) {
+                            dialogue = dialogue.set_directory(dossier);
+                        }
+                        if let Some(p) = dialogue.pick_file() {
+                            self.chemin_local = p.display().to_string();
+                            self.mode = ModeImage::Locale;
+                        }
+                    }
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.chemin_local)
+                            .hint_text("image .img.zst téléchargée à part")
+                            .desired_width(ui.available_width())
+                            .margin(egui::Margin::symmetric(8, 6)),
+                    );
+                    if r.changed() {
+                        self.mode = ModeImage::Locale;
+                    }
+                    r.on_hover_text(
+                        "Image téléchargée à part (.img.zst ou .img) ; .bmap et .sha256 lus à côté s'ils existent.",
+                    );
+                });
+            });
+        });
+    }
+
+    fn ui_perso(&mut self, ui: &mut egui::Ui) {
+        let verifier = &mut self.verifier;
+        let p = &mut self.perso;
+        Self::carte(ui, 3, "Votre compte", |ui| {
+            let champ = |ui: &mut egui::Ui, texte: &mut String, indice: &str, secret: bool| {
+                ui.add(
+                    egui::TextEdit::singleline(texte)
+                        .hint_text(indice)
+                        .password(secret)
+                        .desired_width(ui.available_width())
+                        .margin(egui::Margin::symmetric(8, 6)),
+                )
+            };
+            egui::Grid::new("perso")
+                .num_columns(2)
+                .spacing([14.0, 8.0])
+                .min_col_width(130.0)
+                .show(ui, |ui| {
+                    ui.label("Identifiant");
+                    champ(ui, &mut p.identifiant, "ex. lucas", false)
+                        .on_hover_text("Nom de connexion : minuscules, chiffres, - ou _");
+                    ui.end_row();
+
+                    ui.label("Nom complet");
+                    champ(ui, &mut p.nom_complet, "ex. Lucas Dupont", false);
+                    ui.end_row();
+
+                    ui.label("Mot de passe");
+                    champ(ui, &mut p.mot_de_passe, "vide : demandé au premier démarrage", true)
+                        .on_hover_text(format!(
+                            "Au moins {MOT_DE_PASSE_MIN} caractères. Laisser vide : il sera demandé au premier démarrage."
+                        ));
+                    ui.end_row();
+
+                    ui.label("Confirmation");
+                    champ(ui, &mut p.confirmation, "", true);
+                    ui.end_row();
+
+                    ui.label("Nom de la machine");
+                    let proposition = if p.identifiant.trim().is_empty() {
+                        "ex. cle-lucas".to_string()
+                    } else {
+                        crate::config::machine_par_defaut(p.identifiant.trim())
+                    };
+                    champ(ui, &mut p.machine, &proposition, false);
+                    ui.end_row();
+
+                    ui.label("Clavier");
+                    egui::ComboBox::from_id_salt("clavier")
+                        .width(ui.available_width())
+                        .selected_text(CLAVIERS[p.clavier].1)
+                        .show_ui(ui, |ui| {
+                            for (i, c) in CLAVIERS.iter().enumerate() {
+                                ui.selectable_value(&mut p.clavier, i, c.1);
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Langue");
+                    egui::ComboBox::from_id_salt("langue")
+                        .width(ui.available_width())
+                        .selected_text(LANGUES[p.langue].1)
+                        .show_ui(ui, |ui| {
+                            for (i, l) in LANGUES.iter().enumerate() {
+                                ui.selectable_value(&mut p.langue, i, l.1);
+                            }
+                        });
+                    ui.end_row();
+                });
+            ui.add_space(6.0);
+            ui.checkbox(&mut p.chiffrer, "Chiffrer la clé (recommandé)");
+            ui.horizontal(|ui| {
+                ui.add_space(26.0);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(
+                            "Une phrase secrète sera choisie au premier démarrage, puis demandée \
+                             à chaque démarrage. Notez-la !",
+                        )
+                        .small()
+                        .weak(),
+                    )
+                    .wrap(),
+                );
+            });
+            ui.checkbox(verifier, "Vérifier la clé après l'écriture (relecture)");
+        });
+    }
+
+    /// Zone d'état : progression, résultat, ou ce qu'il reste à remplir.
     fn ui_etat(&mut self, ui: &mut egui::Ui) {
-        Self::section(ui, "État");
         if let Some(t) = &self.travail {
-            ui.label(&t.etape);
+            ui.label(egui::RichText::new(&t.etape).family(theme::gras()));
             ui.add(
                 egui::ProgressBar::new(t.fraction)
-                    .show_percentage()
                     .text(&t.detail)
+                    .fill(theme::accent(ui))
+                    .desired_height(24.0)
+                    .corner_radius(6)
                     .animate(true),
             );
         } else if let Some(r) = &self.resultat {
             match r {
-                Ok(m) => ui.colored_label(egui::Color32::from_rgb(0x2e, 0x9e, 0x4f), m.as_str()),
-                Err(m) if m == ANNULE => ui.label(m),
-                Err(m) => ui.colored_label(ui.visuals().error_fg_color, m.as_str()),
-            };
-        } else {
-            let o = self.obstacles();
-            if o.is_empty() {
-                ui.label("Prêt.");
-            } else {
-                for x in o {
-                    ui.label(format!("• {x}"));
-                }
+                Ok(m) => Self::encadre(ui, theme::vert(ui), &format!("✔  {m}")),
+                Err(m) if m == ANNULE => Self::encadre(ui, ui.visuals().weak_text_color(), m),
+                Err(m) => Self::encadre(ui, ui.visuals().error_fg_color, m),
             }
+        } else if let Some(x) = self.obstacles().first() {
+            ui.label(egui::RichText::new(format!("Pour continuer : {x}")).weak());
         }
     }
 
@@ -460,18 +577,29 @@ impl Appli {
         };
         let mut choix = None;
         egui::Modal::new(egui::Id::unique("confirmation")).show(ctx, |ui| {
-            ui.set_max_width(460.0);
+            ui.set_max_width(440.0);
             ui.heading("Effacer la clé ?");
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             ui.label("Toutes les données de ce disque seront définitivement effacées :");
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new(d.libelle()).strong());
-            ui.add_space(10.0);
+            ui.add_space(6.0);
+            Self::encadre(ui, ui.visuals().warn_fg_color, &d.libelle());
+            ui.add_space(14.0);
             ui.horizontal(|ui| {
-                if ui.button("Effacer et écrire").clicked() {
+                let rouge = ui.visuals().error_fg_color;
+                let b = egui::Button::new(
+                    egui::RichText::new("Effacer et écrire")
+                        .family(theme::gras())
+                        .color(egui::Color32::WHITE),
+                )
+                .fill(rouge)
+                .min_size(egui::vec2(150.0, 34.0));
+                if ui.add(b).clicked() {
                     choix = Some(true);
                 }
-                if ui.button("Annuler").clicked() {
+                if ui
+                    .add(egui::Button::new("Annuler").min_size(egui::vec2(100.0, 34.0)))
+                    .clicked()
+                {
                     choix = Some(false);
                 }
             });
@@ -484,6 +612,47 @@ impl Appli {
             Some(false) => self.confirmation = false,
             None => {}
         }
+    }
+
+    /// Barre du bas, toujours visible : bouton principal et liens.
+    fn ui_pied(&mut self, ui: &mut egui::Ui) {
+        self.ui_etat(ui);
+        ui.add_space(4.0);
+        let largeur = ui.available_width();
+        if let Some(t) = &self.travail {
+            if ui
+                .add(egui::Button::new("Annuler").min_size(egui::vec2(largeur, 40.0)))
+                .clicked()
+            {
+                t.annuler.store(true, Ordering::Relaxed);
+            }
+        } else {
+            let pret = self.obstacles().is_empty();
+            let b = egui::Button::new(
+                egui::RichText::new("Fabriquer la clé")
+                    .family(theme::gras())
+                    .size(16.0)
+                    .color(egui::Color32::WHITE),
+            )
+            .fill(theme::accent(ui))
+            .corner_radius(8);
+            let r = ui
+                .add_enabled_ui(pret, |ui| ui.add_sized([largeur, 42.0], b))
+                .inner;
+            if r.clicked() {
+                self.resultat = None;
+                self.confirmation = true;
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(env!("VERSION_APPLI")).small().weak());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.hyperlink_to(
+                    egui::RichText::new("Aide et sources").small(),
+                    format!("https://github.com/{}", releases::DEPOT),
+                );
+            });
+        });
     }
 }
 
@@ -519,41 +688,43 @@ impl eframe::App for Appli {
         }
         ctx.request_repaint_after(Duration::from_secs(2));
 
+        let fond = ui.visuals().panel_fill;
+        let marges = egui::Frame::new().fill(fond).inner_margin(egui::Margin {
+            left: 20,
+            right: 20,
+            top: 10,
+            bottom: 14,
+        });
+        egui::Panel::bottom("pied")
+            .frame(marges)
+            .show_separator_line(true)
+            .show(ui, |ui| self.ui_pied(ui));
+
         let occupe = self.travail.is_some();
-        egui::CentralPanel::default_margins().show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_enabled_ui(!occupe, |ui| {
-                    self.ui_cle(ui);
-                    self.ui_image(ui);
-                    self.ui_perso(ui);
-                });
-                self.ui_etat(ui);
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if let Some(t) = &self.travail {
-                        if ui.button("Annuler").clicked() {
-                            t.annuler.store(true, Ordering::Relaxed);
-                        }
-                    } else {
-                        let pret = self.obstacles().is_empty();
-                        let b = egui::Button::new(
-                            egui::RichText::new("  Démarrer  ").strong().size(16.0),
-                        );
-                        if ui.add_enabled(pret, b).clicked() {
-                            self.resultat = None;
-                            self.confirmation = true;
-                        }
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.hyperlink_to(
-                            "Aide et sources",
-                            format!("https://github.com/{}", releases::DEPOT),
-                        );
-                        ui.label(egui::RichText::new(env!("VERSION_APPLI")).weak());
-                    });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(fond))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 20,
+                            right: 20,
+                            top: 18,
+                            bottom: 6,
+                        })
+                        .show(ui, |ui| {
+                            self.ui_entete(ui);
+                            ui.add_space(12.0);
+                            ui.add_enabled_ui(!occupe, |ui| {
+                                self.ui_cle(ui);
+                                ui.add_space(10.0);
+                                self.ui_image(ui);
+                                ui.add_space(10.0);
+                                self.ui_perso(ui);
+                            });
+                        });
                 });
             });
-        });
         if self.confirmation {
             self.ui_confirmation(&ctx);
         }

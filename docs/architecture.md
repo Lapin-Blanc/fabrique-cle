@@ -84,6 +84,8 @@ clé USB → image (version publiée ou fichier local glissé) → personnalisat
 | `disques/linux.rs` | sysfs : disques dont le chemin passe par `/usb`, hors disques système (racine, /boot, /home…, swap, en traversant LUKS/LVM via `slaves`) ; refus si un volume LUKS/LVM est ouvert ; `umount`, ouverture `O_EXCL`, `BLKFLSBUF`, `BLKRRPART` |
 | `disques/windows.rs` | `\\.\PhysicalDriveN` en bus USB (ou amovible), hors disque de `C:\Windows` ; verrouillage + démontage de chaque volume de la clé (`FSCTL_LOCK_VOLUME`, `FSCTL_DISMOUNT_VOLUME`), `IOCTL_DISK_UPDATE_PROPERTIES` à la fin ; manifeste `requireAdministrator` (`build.rs`) |
 | `assistant.rs` | Linux : l'interface reste utilisateur ; l'écriture est faite par `pkexec <app> --assistant` (JSON sur stdin, progression ligne à ligne sur stdout, fermeture de stdin = annulation). Dans une AppImage, c'est `$APPIMAGE` qui est relancé (root ne lit pas le montage FUSE) |
+| `theme.rs` | apparence : police Inter embarquée (OFL, `app/ressources/`), couleurs claires et sombres suivant le système (`FABRIQUE_CLE_THEME=clair\|sombre` pour forcer), espacements, icône de fenêtre |
+| `interface.rs` | fenêtre : en-tête, trois cartes numérotées (clé, système, compte), barre du bas toujours visible (état, bouton « Fabriquer la clé ») |
 | `travail.rs` | enchaînement : ouverture → écriture → vérification → `config.txt` → relecture |
 
 Garde-fous : la clé choisie est **revérifiée** (chemin + n° de série + taille) juste avant l'écriture,

@@ -749,6 +749,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hex",
  "libc",
+ "png",
  "rfd",
  "serde",
  "serde_json",
