@@ -20,6 +20,7 @@ VG=fabcle
 CRYPT=fabcle_test
 
 [ "$(id -u)" -eq 0 ] || { echo "Lancer avec sudo."; exit 1; }
+vgs "$VG" >/dev/null 2>&1 && { echo "ABANDON : le groupe de volumes $VG est déjà actif sur cet hôte"; exit 1; }
 journal() { printf '\n=== %s ===\n' "$*"; }
 
 CODE= VARS=
@@ -94,10 +95,12 @@ if [ "$rc" -ne 0 ]; then echo "ÉCHEC : QEMU code $rc (124 = délai dépassé ; 
 attacher
 if cryptsetup open --key-file "$CLE_TMP" "${LOOP}p3" "$CRYPT" 2>/dev/null || \
    printf '%s' "$PHRASE" | cryptsetup open --key-file - "${LOOP}p3" "$CRYPT" 2>/dev/null; then
-  vgchange -ay "$VG" >/dev/null; mount -o ro "/dev/$VG/root" "$MNT"
-  echo "--- journal du premier démarrage ---"; cat "$MNT/var/log/fabrique-cle.log" || true; echo "---"
-  cp "$MNT/var/log/fabrique-cle.log" "$TRAV/" 2>/dev/null || true
-  umount "$MNT"; vgchange -an "$VG" >/dev/null; cryptsetup close "$CRYPT"
+  if vgchange -ay "$VG" >/dev/null && mount -o ro "/dev/$VG/root" "$MNT"; then
+    echo "--- journal du premier démarrage ---"; cat "$MNT/var/log/fabrique-cle.log" || true; echo "---"
+    cp "$MNT/var/log/fabrique-cle.log" "$TRAV/" 2>/dev/null || true
+    umount "$MNT"
+  fi
+  vgchange -an "$VG" >/dev/null || true; cryptsetup close "$CRYPT" || true
 fi
 detacher
 [ "$rc" -eq 0 ] || exit 1

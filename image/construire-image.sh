@@ -33,13 +33,28 @@ journal() { printf '\n=== %s ===\n' "$*"; }
 
 MNT=$(mktemp -d)
 LOOP=
+# Processus lancés dans le chroot par les scripts des paquets (ils bloqueraient le démontage)
+tuer_chroot() {
+  local p
+  for p in /proc/[0-9]*; do
+    [ "$(readlink "$p/root" 2>/dev/null)" = "$MNT" ] && { echo "arrêt du processus ${p#/proc/} ($(cat "$p/comm"))"; kill -9 "${p#/proc/}"; }
+  done
+  sleep 1
+}
+demonter() {
+  tuer_chroot
+  umount -R "$MNT"
+  vgchange -an "$VG" >/dev/null
+  cryptsetup close "$CRYPT"
+  losetup -d "$LOOP"; LOOP=
+}
 nettoyer() {
   set +e
-  umount -R "$MNT" 2>/dev/null
+  if mountpoint -q "$MNT"; then tuer_chroot; umount -R "$MNT"; fi
   vgchange -an "$VG" >/dev/null 2>&1
   cryptsetup close "$CRYPT" 2>/dev/null
   [ -n "$LOOP" ] && losetup -d "$LOOP"
-  rmdir "$MNT"
+  rmdir "$MNT" 2>/dev/null
 }
 trap nettoyer EXIT
 
@@ -251,5 +266,9 @@ df -h "$MNT" "$MNT/boot" "$MNT/boot/efi"
 fstrim -v "$MNT/boot/efi" || true
 fstrim -v "$MNT/boot" || true
 fstrim -v "$MNT" || true
+
+journal "Démontage"
+demonter
+cryptsetup status "$CRYPT" >/dev/null 2>&1 && { echo "ERREUR : volume encore ouvert"; exit 1; }
 
 journal "Image prête : $SORTIE (clé temporaire de test : $CLE_TMP)"
