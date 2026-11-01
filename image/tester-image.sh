@@ -1,8 +1,9 @@
 #!/bin/bash
 # Teste une image Fabrique-Clé dans QEMU, comme une vraie clé USB sur un PC inconnu :
 # OVMF Secure Boot (clés Microsoft), NVRAM vierge, disque USB plus grand que l'image.
-# Le premier démarrage est piloté par un config.txt de test (chiffrement compris), puis
-# l'image testée est inspectée hors ligne.
+# Le premier démarrage est piloté par un config.txt de test (chiffrement compris) ; la phrase
+# secrète est tapée au clavier virtuel, comme le ferait l'élève, une fois la question réellement
+# visible à l'écran. L'image testée est ensuite inspectée hors ligne.
 #
 #   sudo ./tester-image.sh out/fabrique-cle.img
 #
@@ -15,7 +16,10 @@ CLE_TMP="${IMG%.img}.key"
 TRAV=$ICI/out/test
 EN_PLUS=${EN_PLUS:-6G}          # la « clé » de test est plus grande que l'image
 DELAI=${DELAI:-1800}             # secondes avant de déclarer l'échec
-PHRASE=fabrique-test-$RANDOM$RANDOM
+# Phrase tapée au clavier : uniquement des lettres placées au même endroit en AZERTY et en QWERTY
+# (le clavier belge est actif quand la question est posée).
+PHRASE=$(head -c 4096 /dev/urandom | LC_ALL=C tr -dc 'bcdefghijklnoprstuvxy' | head -c 16)
+ATTENTE_QUESTION=${ATTENTE_QUESTION:-900}   # secondes pour voir apparaître la question
 VG=fabcle
 CRYPT=fabcle_test
 
@@ -64,7 +68,6 @@ machine=cle-test
 clavier=be
 langue=fr_BE.UTF-8
 chiffrer=oui
-phrase_luks_test=$PHRASE
 eteindre_apres=oui
 EOF
 umount "$MNT"
@@ -91,6 +94,50 @@ QEMU=$!
     sleep 20
     echo "screendump $TRAV/ecran.ppm" | socat - UNIX-CONNECT:"$TRAV/monitor.sock" >/dev/null 2>&1 || true
   done ) &
+
+# ---------------------------------------------------------------------------
+# Saisie de la phrase, comme l'élève : seulement quand la question est visible à l'écran.
+moniteur() {  # commande pour le moniteur QEMU (réessaie si la capture périodique l'occupe)
+  local i
+  for i in 1 2 3 4 5; do
+    echo "$1" | socat - UNIX-CONNECT:"$TRAV/monitor.sock" >/dev/null 2>&1 && return 0
+    sleep 0.3
+  done
+  return 1
+}
+taper() {  # taper <texte> : lettres une à une, puis Entrée
+  local i
+  for ((i = 0; i < ${#1}; i++)); do moniteur "sendkey ${1:i:1}"; sleep 0.15; done
+  moniteur "sendkey ret"
+}
+question_visible() {  # vrai si l'écran est majoritairement le fond bleu de whiptail
+  moniteur "screendump $TRAV/question.ppm" || return 1
+  sleep 1
+  python3 - "$TRAV/question.ppm" <<'PY'
+import sys
+d = open(sys.argv[1], "rb").read()
+entete = d.split(b"\n", 3)          # P6 / largeur hauteur / 255 / pixels
+l, h = map(int, entete[1].split())
+px = entete[3]
+pas = 3 * 7
+n = len(range(0, len(px) - 2, pas))
+bleus = sum(1 for i in range(0, len(px) - 2, pas) if px[i + 2] > 120 and px[i] < 60 and px[i + 1] < 60)
+sys.exit(0 if n and bleus / n > 0.4 else 1)
+PY
+}
+( debut=$SECONDS
+  until question_visible; do
+    if ! kill -0 $QEMU 2>/dev/null; then exit 0; fi
+    if (( SECONDS - debut > ATTENTE_QUESTION )); then
+      echo "ÉCHEC : question de la phrase secrète jamais visible à l'écran (voir $TRAV/question.ppm)"
+      cp "$TRAV/question.ppm" "$TRAV/ecran.ppm" 2>/dev/null || true
+      kill $QEMU; exit 1
+    fi
+    sleep 5
+  done
+  echo "Question visible après $((SECONDS - debut)) s : saisie de la phrase (deux fois)"
+  taper "$PHRASE"; sleep 3; taper "$PHRASE"
+) &
 wait $QEMU || rc=$?
 if [ "$rc" -ne 0 ]; then echo "ÉCHEC : QEMU code $rc (124 = délai dépassé ; voir $TRAV/ecran.ppm)"; fi
 

@@ -107,8 +107,9 @@ jobs:
           # Le workflow de l'image peut créer la release en même temps : réessayer.
           for i in 1 2 3 4 5; do
             gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
-            gh release create "$GITHUB_REF_NAME" --title "Fabrique-Clé $GITHUB_REF_NAME" \
-              --notes "Image Debian 13 + KDE Plasma (léger), testée dans QEMU avec Secure Boot, et application Fabrique-Clé (Windows, Linux)." \
+            # Toujours en pré-version : l'enseignant la promeut après un essai sur vrai matériel.
+            gh release create "$GITHUB_REF_NAME" --title "Fabrique-Clé $GITHUB_REF_NAME" --prerelease \
+              --notes "Image Debian 13 + KDE Plasma (léger), testée dans QEMU avec Secure Boot, et application Fabrique-Clé (Windows : fabrique-cle-windows.exe ; Linux : fabrique-cle-linux-x86_64.AppImage). Pré-version : à valider sur vrai matériel, puis décocher « pre-release » sur GitHub." \
               && break || sleep 10
           done
           gh release upload "$GITHUB_REF_NAME" * --clobber
