@@ -177,7 +177,7 @@ verifier "nom de machine cle-test" "[ \"\$(cat $MNT/etc/hostname)\" = cle-test ]
 verifier "crypttab sans clé temporaire" "grep -qE '^fabcle_crypt\\s+\\S+\\s+none\\s' $MNT/etc/crypttab"
 verifier "plus de fichier de clé temporaire" "[ ! -e $MNT/etc/cryptsetup-keys.d/fabcle_crypt.key ]"
 verifier "machine-id générée au démarrage" "[ -s $MNT/etc/machine-id ]"
-verifier "synchronisation de l'heure (systemd-timesyncd) activée" "[ -e $MNT/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service ]"
+verifier "synchronisation de l'heure (systemd-timesyncd) activée" "[ -L $MNT/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service ]"
 verifier "état de premier démarrage effacé" "[ ! -e $MNT/var/lib/fabrique-cle/a-configurer ]"
 umount "$MNT"
 vgchange -an "$VG" >/dev/null; cryptsetup close "$CRYPT"
