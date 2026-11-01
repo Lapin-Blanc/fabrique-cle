@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ICI=$(dirname "$(readlink -f "$0")")
-IMG=$(readlink -f "${1:-$ICI/out/fabrique-cle.img}")
+IMG=$(realpath -m "${1:-$ICI/out/fabrique-cle.img}")
 CLE_TMP="${IMG%.img}.key"
 TRAV=$ICI/out/test
 EN_PLUS=${EN_PLUS:-6G}          # la « clé » de test est plus grande que l'image

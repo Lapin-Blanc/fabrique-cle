@@ -14,7 +14,7 @@
 set -euo pipefail
 
 ICI=$(dirname "$(readlink -f "$0")")
-SORTIE=$(readlink -f "${1:-$ICI/out/fabrique-cle.img}")
+SORTIE=$(realpath -m "${1:-$ICI/out/fabrique-cle.img}")
 TAILLE=${TAILLE:-10G}
 SUITE=trixie
 MIROIR=${MIROIR:-http://deb.debian.org/debian}
