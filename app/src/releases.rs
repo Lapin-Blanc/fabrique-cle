@@ -217,11 +217,43 @@ pub fn telecharger(v: &Version, suivi: &dyn Suivi) -> Result<ImageLocale, String
 
     suivi.etape(&format!("Téléchargement de l'image {}", v.etiquette));
     let partiel = image.with_extension("zst.partiel");
-    let mut sortie = File::create(&partiel).map_err(|e| format!("{} : {e}", partiel.display()))?;
-    let mut h = Sha256::new();
+    let a = agent();
+    // Par morceaux en parallèle, avec reprise ; sinon d'un bloc.
+    match crate::telechargement::telecharger(
+        &a,
+        &v.morceaux,
+        &partiel,
+        crate::telechargement::Reglages::default(),
+        suivi,
+    ) {
+        Ok(()) => {}
+        Err(e) if e == crate::telechargement::NON_PRIS_EN_CHARGE => {
+            let _ = fs::remove_file(format!("{}.etat", partiel.display()));
+            telecharger_d_un_bloc(&a, v, &partiel, suivi)?
+        }
+        Err(e) => return Err(e),
+    }
+    suivi.etape("Vérification de l'image téléchargée (SHA-256)");
+    if sha256_fichier(&partiel, suivi)? != attendu {
+        let _ = fs::remove_file(&partiel);
+        let _ = fs::remove_file(format!("{}.etat", partiel.display()));
+        return Err("Image téléchargée corrompue (SHA-256 différent) : recommencez.".into());
+    }
+    fs::rename(&partiel, &image).map_err(|e| format!("{} : {e}", image.display()))?;
+    nettoyer_cache(&dossier, &attendu[..16]);
+    Ok(ImageLocale { image, bmap })
+}
+
+/// Téléchargement simple, d'un seul flux (serveur sans requêtes `Range`).
+fn telecharger_d_un_bloc(
+    a: &ureq::Agent,
+    v: &Version,
+    partiel: &Path,
+    suivi: &dyn Suivi,
+) -> Result<(), String> {
+    let mut sortie = File::create(partiel).map_err(|e| format!("{} : {e}", partiel.display()))?;
     let mut recus = 0u64;
     let mut buf = vec![0u8; 1 << 20];
-    let a = agent();
     for url in &v.morceaux {
         let mut rep = a
             .get(url)
@@ -230,8 +262,6 @@ pub fn telecharger(v: &Version, suivi: &dyn Suivi) -> Result<ImageLocale, String
         let mut lecteur = rep.body_mut().as_reader();
         loop {
             if suivi.annule() {
-                drop(sortie);
-                let _ = fs::remove_file(&partiel);
                 return Err(crate::suivi::ANNULE.into());
             }
             let n = lecteur
@@ -240,7 +270,6 @@ pub fn telecharger(v: &Version, suivi: &dyn Suivi) -> Result<ImageLocale, String
             if n == 0 {
                 break;
             }
-            h.update(&buf[..n]);
             sortie
                 .write_all(&buf[..n])
                 .map_err(|e| format!("écriture dans le cache : {e}"))?;
@@ -257,14 +286,20 @@ pub fn telecharger(v: &Version, suivi: &dyn Suivi) -> Result<ImageLocale, String
     }
     sortie
         .sync_all()
-        .map_err(|e| format!("écriture dans le cache : {e}"))?;
-    drop(sortie);
-    if hex::encode(h.finalize()) != attendu {
-        let _ = fs::remove_file(&partiel);
-        return Err("Image téléchargée corrompue (SHA-256 différent) : recommencez.".into());
+        .map_err(|e| format!("écriture dans le cache : {e}"))
+}
+
+/// Ne garder dans le cache que l'image qui vient d'être téléchargée (une image = ~2 Go).
+fn nettoyer_cache(dossier: &Path, garder: &str) {
+    let Ok(it) = fs::read_dir(dossier) else {
+        return;
+    };
+    for e in it.flatten() {
+        let nom = e.file_name().to_string_lossy().into_owned();
+        if !nom.starts_with(garder) && nom.contains(".img.") {
+            let _ = fs::remove_file(e.path());
+        }
     }
-    fs::rename(&partiel, &image).map_err(|e| format!("{} : {e}", image.display()))?;
-    Ok(ImageLocale { image, bmap })
 }
 
 /// Image choisie sur le disque : `.bmap` et `.sha256` cherchés à côté (facultatifs).

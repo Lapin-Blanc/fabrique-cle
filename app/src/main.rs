@@ -14,6 +14,7 @@ mod esp;
 mod interface;
 mod releases;
 mod suivi;
+mod telechargement;
 mod theme;
 mod travail;
 
