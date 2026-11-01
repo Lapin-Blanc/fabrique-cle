@@ -59,7 +59,9 @@ jobs:
           cd image/out
           sudo chown -R "$USER" .
           bmaptool create fabrique-cle.img > fabrique-cle.img.bmap
-          zstd -T0 -12 -q fabrique-cle.img -o fabrique-cle.img.zst
+          # --long=27 : fenêtre de 128 Mio (-5 % pour quelques secondes) ; c'est la limite par défaut des
+          # décodeurs (zstd, crate Rust zstd) : rien à régler côté application
+          zstd -T0 -12 --long=27 -q fabrique-cle.img -o fabrique-cle.img.zst
           sha256sum fabrique-cle.img.zst > fabrique-cle.img.zst.sha256
           # Garde-fou : un volume chiffré dans l'image la rend incompressible (7,5 Go au lieu de ~2)
           ZST=$(stat -c %s fabrique-cle.img.zst)

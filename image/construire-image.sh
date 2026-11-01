@@ -50,9 +50,20 @@ tuer_chroot() {
   done
   sleep 1
 }
+# Rend au fichier image TOUS les blocs libres des systèmes ext4, une fois démontés : fstrim sur un
+# système monté en oublie une part variable (2,8 à 3 Gio rendus selon les builds, soit ~90 Mo de
+# plus ou de moins une fois compressé). e2fsck -E discard est exhaustif et vérifie au passage.
+liberer_blocs() {
+  local d rc
+  for d in "$P2" "/dev/$VG/root"; do
+    rc=0; e2fsck -f -p -E discard "$d" || rc=$?
+    [ "$rc" -le 1 ] || { echo "ERREUR : e2fsck $d (code $rc)"; exit 1; }
+  done
+}
 demonter() {
   tuer_chroot
   umount -R "$MNT"
+  liberer_blocs
   # udev sonde les périphériques juste après le démontage : on attend qu'il les relâche
   local i
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -118,10 +129,22 @@ rmdir "$MNT/lost+found"
 
 # ---------------------------------------------------------------------------
 journal "Système de base (mmdebstrap)"
+# Allègement : ni documentation ni pages de manuel ni info (≈ 150-200 Mo). mmdebstrap écrit ces règles
+# dans /etc/dpkg/dpkg.cfg.d/99mmdebstrap : elles valent aussi pour les paquets installés ensuite, et
+# sur la clé. Les licences (copyright) restent. Firmwares et pilotes : tous gardés (clé polyvalente).
+# Pour récupérer les pages de manuel sur une clé : supprimer ce fichier et réinstaller les paquets.
+ALLEGER=(
+  --dpkgopt='path-exclude=/usr/share/doc/*'
+  --dpkgopt='path-include=/usr/share/doc/*/copyright'
+  --dpkgopt='path-exclude=/usr/share/man/*'
+  --dpkgopt='path-exclude=/usr/share/info/*'
+  --dpkgopt='path-exclude=/usr/share/lintian/*'
+)
 mmdebstrap --variant=important --components="$COMPOSANTS" \
   --setup-hook="mkdir -p \"\$1/var/cache/apt/archives\" && mount --bind '$CACHE' \"\$1/var/cache/apt/archives\"" \
   --customize-hook='umount "$1/var/cache/apt/archives"' \
   --include=locales,console-setup,keyboard-configuration,ca-certificates \
+  "${ALLEGER[@]}" \
   "$SUITE" "$MNT" "$MIROIR"
 
 mkdir -p "$MNT/lost+found"
@@ -242,8 +265,12 @@ chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Opt
   firmware-linux firmware-misc-nonfree \
   firmware-intel-graphics firmware-intel-misc firmware-mediatek firmware-nvidia-graphics \
   firmware-amd-graphics firmware-iwlwifi firmware-realtek firmware-atheros \
-  firmware-brcm80211 firmware-sof-signed
-for p in kde-standard kde-full task-kde-desktop; do
+  firmware-brcm80211 firmware-sof-signed \
+  fonts-noto-extra- fonts-noto-cjk-extra- fonts-noto-ui-extra-
+# (« paquet- » = ne pas installer.) Ces trois paquets, recommandés via fonts-noto, n'apportent que des
+# graisses et largeurs supplémentaires (~600 Mio) : toutes les écritures restent couvertes par
+# fonts-noto-core, fonts-noto-cjk, fonts-noto-ui-core et fonts-noto-mono.
+for p in kde-standard kde-full task-kde-desktop fonts-noto-extra fonts-noto-cjk-extra fonts-noto-ui-extra; do
   if chroot "$MNT" dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok'; then
     echo "ERREUR : $p installé"; exit 1
   fi
@@ -276,6 +303,10 @@ chroot "$MNT" update-grub
 # ---------------------------------------------------------------------------
 journal "Nettoyage (identité unique par clé)"
 chroot "$MNT" apt-get clean
+# Restes de l'allègement : le jeu essentiel de mmdebstrap est extrait sans les règles path-exclude
+find "$MNT/usr/share/doc" -mindepth 1 ! -type d ! -name copyright -delete
+find "$MNT/usr/share/doc" -mindepth 1 -type d -empty -delete
+rm -rf "$MNT/usr/share/man/"* "$MNT/usr/share/info/"* "$MNT/usr/share/lintian/"*
 umount "$MNT/var/cache/apt/archives"
 rm -f "$MNT/usr/sbin/policy-rc.d"
 : > "$MNT/etc/resolv.conf"
@@ -292,11 +323,11 @@ cmp "$MNT/boot/efi/EFI/BOOT/grubx64.efi" "$MNT/boot/efi/EFI/debian/grubx64.efi" 
 [ ! -e "$MNT/boot/efi/EFI/BOOT/fbx64.efi" ] && echo "pas de fbx64.efi dans EFI/BOOT"
 df -h "$MNT" "$MNT/boot" "$MNT/boot/efi"
 cryptsetup status "$CRYPT" | grep -E 'cipher|keysize'
+du -sm "$MNT/usr/share/doc" "$MNT/usr/share/man" "$MNT/usr/lib/firmware" 2>/dev/null || true
 
 # Blocs libres rendus au fichier image (image creuse, meilleure compression)
+# (ext4 : e2fsck -E discard au démontage ; la FAT, elle, ne se traite que montée)
 fstrim -v "$MNT/boot/efi" || true
-fstrim -v "$MNT/boot" || true
-fstrim -v "$MNT" || true
 sync
 
 journal "Démontage"
