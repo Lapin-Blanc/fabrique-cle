@@ -34,7 +34,7 @@ temporaire ni de rechiffrement. À prototyper et à couvrir par `tester-image.sh
 créé en **`cipher_null`** (données en clair, donc compressibles), et le service de premier démarrage le
 chiffre **en ligne** en AES-XTS avec `cryptsetup reencrypt --cipher aes-xts-plain64 --key-size 512` —
 le même mécanisme que le rechiffrement déjà testé, sans décalage de données ni script initramfs.
-Le test vérifie qu'il ne reste aucun segment `cipher_null` (15 vérifications, run 41300324296 vert ;
+Le test vérifie qu'il ne reste aucun segment `cipher_null` (15 vérifications, runs 41300324296 et 41301253775 verts ; un seul fichier `.zst` de 2 055 Mo ;
 chiffrement en ligne ≈ 1 min 40 dans QEMU).
 
 Mesures (zstd -12) : volume chiffré 7,5 Go → `cipher_null` 3,47 Go → + cache APT hors de l'image
