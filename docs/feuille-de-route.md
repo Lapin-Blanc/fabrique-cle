@@ -14,8 +14,21 @@
 - [x] `construire-image.sh` : image 10 Gio, ~5,2 Go utilisés, construite en ~6 min sur GitHub
 - [x] Service de premier démarrage (config.txt ou questions, rechiffrement, agrandissement, compte)
 - [x] `tester-image.sh` : test complet réussi (Secure Boot, USB, NVRAM vierge, 14 vérifications)
-- [ ] Étape de compression/artefact du workflow (corrigée, à confirmer)
-- [ ] Première release `v2026.11` et vérification de la taille compressée (limite 2 Gio par fichier)
+- [x] Workflow complet vert (construction, test, compression, artefact) — run 41296826593, 11 min 34 s
+- [ ] Première release `v2026.11`
+
+## Problème prioritaire : taille de l'image compressée (7,5 Go, 4 morceaux)
+
+Constaté le 2026-11-01 : `fabrique-cle.img.zst` = 7,5 Go alors que le système occupe 5,2 Go. Cause : le
+volume est **chiffré dans l'image**, donc incompressible ; et une partie de l'espace libre chiffré n'est
+pas rendue creuse par `fstrim`. Trop lourd pour des élèves.
+
+Piste recommandée : publier l'image **non chiffrée** (LVM sur p3 en clair, compressible ~2-2,5×, donc
+~2 Go) et **chiffrer au premier démarrage** avec `cryptsetup reencrypt --encrypt --reduce-device-size 32M`
+(chiffrement en place de LUKS2). Le chiffrement en place d'un volume racine monté n'est pas possible en
+ligne : il faut le faire **dans l'initramfs** (script `local-top` avant le montage de la racine, déclenché
+par un marqueur posé par le service de premier démarrage, puis redémarrage). Bonus : plus besoin de clé
+temporaire ni de rechiffrement. À prototyper et à couvrir par `tester-image.sh`.
 
 ## Prochaines étapes
 
