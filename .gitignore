@@ -9,3 +9,4 @@
 /image/work/
 # Secrets éventuels
 *.env
+/image/publier/

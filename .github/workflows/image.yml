@@ -1,0 +1,89 @@
+# Construit l'image Fabrique-Clé, la teste dans QEMU (Secure Boot, clé USB, premier démarrage chiffré)
+# et, sur une étiquette v*, la publie dans une release.
+name: Image
+
+on:
+  push:
+    branches: [main]
+    paths: ['image/**', '.github/workflows/image.yml']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Libérer de l'espace disque
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Outils de construction et de test
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y mmdebstrap debian-archive-keyring gdisk cryptsetup lvm2 dosfstools \
+            qemu-system-x86 ovmf zstd bmap-tools cloud-guest-utils socat
+
+      - name: Accès à KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Construire l'image
+        run: sudo VERSION="${GITHUB_REF_NAME}" ./image/construire-image.sh image/out/fabrique-cle.img
+
+      - name: Tester l'image dans QEMU
+        run: sudo ./image/tester-image.sh image/out/fabrique-cle.img
+
+      - name: Diagnostic en cas d'échec
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic
+          path: |
+            image/out/test/ecran.ppm
+            image/out/test/serie.log
+          if-no-files-found: ignore
+
+      - name: Compresser (zstd + bmap), découper sous 2 Gio
+        run: |
+          cd image/out
+          sudo chown "$USER" fabrique-cle.img
+          bmaptool create fabrique-cle.img > fabrique-cle.img.bmap
+          zstd -T0 -12 -q fabrique-cle.img -o fabrique-cle.img.zst
+          sha256sum fabrique-cle.img.zst > fabrique-cle.img.zst.sha256
+          mkdir -p ../publier
+          if [ "$(stat -c %s fabrique-cle.img.zst)" -gt 2000000000 ]; then
+            split -b 1900M -d -a 2 fabrique-cle.img.zst ../publier/fabrique-cle.img.zst.part
+          else
+            cp fabrique-cle.img.zst ../publier/
+          fi
+          cp fabrique-cle.img.bmap fabrique-cle.img.zst.sha256 ../publier/
+          ls -l ../publier
+
+      - name: Conserver l'image (7 jours)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabrique-cle-image
+          path: image/publier/
+          retention-days: 7
+          compression-level: 0
+
+      - name: Publier la release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --title "Fabrique-Clé $GITHUB_REF_NAME" \
+              --notes "Image Debian 13 + KDE Plasma (léger), testée dans QEMU avec Secure Boot."
+          gh release upload "$GITHUB_REF_NAME" image/publier/* --clobber

@@ -1,0 +1,13 @@
+# Fabrique-Clé — personnalisation lue au premier démarrage, puis effacée.
+#
+# L'application Fabrique-Clé écrit ce fichier sous le nom config.txt dans ce dossier
+# (partition EFI de la clé). Sans config.txt, chaque valeur est demandée à l'écran.
+# Format : cle=valeur, une par ligne ; les lignes commençant par # sont ignorées.
+#
+# identifiant=lucas                     # nom de connexion : minuscules, chiffres, - ou _
+# nom_complet=Lucas Dupont
+# mot_de_passe_hache=$6$...             # haché (SHA-512 crypt), jamais en clair
+# machine=cle-lucas                     # nom de la machine sur le réseau
+# clavier=be                            # be, fr, ch, us
+# langue=fr_BE.UTF-8                    # fr_BE.UTF-8, fr_FR.UTF-8, fr_CH.UTF-8, nl_BE.UTF-8, en_US.UTF-8
+# chiffrer=oui                          # oui : phrase secrète demandée au démarrage ; non : déverrouillage automatique

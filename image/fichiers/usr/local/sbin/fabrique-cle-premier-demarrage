@@ -1,0 +1,182 @@
+#!/bin/bash
+# Fabrique-Clé — configuration au premier démarrage (lancé par systemd sur tty1, avant SDDM).
+#
+# 1. lit /boot/efi/fabrique-cle/config.txt (écrit par l'application ; sinon questions à l'écran)
+# 2. clavier, langue, nom de machine, compte de l'élève
+# 3. si chiffrer=oui : rechiffre le volume (nouvelle clé maîtresse), ajoute la phrase de l'élève,
+#    retire la clé temporaire de l'image
+# 4. agrandit le système à la taille réelle de la clé
+# 5. régénère l'initramfs, efface la configuration
+#
+# Chaque étape est rejouable : en cas d'échec, le service recommence au démarrage suivant.
+set -euo pipefail
+
+ETAT=/var/lib/fabrique-cle
+CONF=/boot/efi/fabrique-cle/config.txt
+LOG=/var/log/fabrique-cle.log
+VG=fabcle
+CRYPT=fabcle_crypt
+CLE_TMP=/etc/cryptsetup-keys.d/$CRYPT.key
+TITRE="Fabrique-Clé — premier démarrage"
+CLAVIERS="be fr ch us"
+LANGUES="fr_BE.UTF-8 fr_FR.UTF-8 fr_CH.UTF-8 nl_BE.UTF-8 en_US.UTF-8"
+
+exec 3>>"$LOG"
+journal() { printf '%s %s\n' "$(date '+%F %T')" "$*" >&3; printf '\n>>> %s\n' "$*"; }
+fait() { [ -e "$ETAT/fait-$1" ]; }
+marquer() { touch "$ETAT/fait-$1"; }
+echec() {
+  journal "ÉCHEC : $*"
+  whiptail --title "$TITRE" --msgbox "La configuration a échoué :\n\n$*\n\nDétails : $LOG\nElle reprendra au prochain démarrage." 14 70 || true
+  exit 1
+}
+trap 'echec "erreur ligne $LINENO"' ERR
+
+# Lecture sûre de config.txt (jamais exécuté) ; tolère les fins de ligne Windows
+conf() {
+  [ -f "$CONF" ] || return 0
+  grep -m1 -E "^$1=" "$CONF" | cut -d= -f2- | tr -d '\r' || true
+}
+dans_liste() { local v=$1; shift; for x in "$@"; do [ "$v" = "$x" ] && return 0; done; return 1; }
+
+demander() {  # demander <question> <défaut> -> stdout
+  whiptail --title "$TITRE" --inputbox "$1" 10 70 "$2" 3>&1 1>&2 2>&3
+}
+menu() {  # menu <question> <défaut> <choix...>
+  local q=$1 def=$2; shift 2
+  local args=() c
+  for c in "$@"; do args+=("$c" ""); done
+  whiptail --title "$TITRE" --default-item "$def" --noitem --menu "$q" 16 70 6 "${args[@]}" 3>&1 1>&2 2>&3
+}
+secret_double() {  # secret_double <libellé> <longueur min> -> stdout
+  local a b
+  while :; do
+    a=$(whiptail --title "$TITRE" --passwordbox "$1\n(au moins $2 caractères)" 11 70 3>&1 1>&2 2>&3)
+    b=$(whiptail --title "$TITRE" --passwordbox "Confirmez :" 9 70 3>&1 1>&2 2>&3)
+    if [ "$a" != "$b" ]; then whiptail --title "$TITRE" --msgbox "Les deux saisies diffèrent." 8 50
+    elif [ "${#a}" -lt "$2" ]; then whiptail --title "$TITRE" --msgbox "Trop court." 8 50
+    else printf '%s' "$a"; return; fi
+  done
+}
+
+mkdir -p "$ETAT"
+journal "Début (config.txt : $([ -f "$CONF" ] && echo présent || echo absent))"
+SB=$(od -An -t u1 -j4 -N1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | tr -d ' ' || true)
+journal "UEFI Secure Boot : ${SB:-inconnu} (1 = actif)"
+
+# ---------------------------------------------------------------------------
+# Valeurs : config.txt, sinon question, validées dans les deux cas
+CLAVIER=$(conf clavier)
+dans_liste "$CLAVIER" $CLAVIERS || CLAVIER=$(menu "Disposition du clavier :" be $CLAVIERS)
+# Appliquer tout de suite, pour la saisie des mots de passe qui suivent
+sed -i -E "s/^XKBLAYOUT=.*/XKBLAYOUT=\"$CLAVIER\"/; s/^XKBVARIANT=.*/XKBVARIANT=\"\"/" /etc/default/keyboard
+setupcon -k --force </dev/tty1 || true
+
+LANGUE=$(conf langue)
+dans_liste "$LANGUE" $LANGUES || LANGUE=$(menu "Langue du système :" fr_BE.UTF-8 $LANGUES)
+
+IDENT=$(conf identifiant)
+until [[ $IDENT =~ ^[a-z][a-z0-9_-]{0,31}$ ]] && ! getent passwd "$IDENT" | grep -qv ':/home/'; do
+  IDENT=$(demander "Identifiant de connexion (minuscules, chiffres, - ou _) :" "${IDENT:-}")
+done
+NOM=$(conf nom_complet | tr -d ':,')
+[ -n "$NOM" ] || NOM=$(demander "Nom complet :" "$IDENT" | tr -d ':,')
+
+MACHINE=$(conf machine)
+until [[ $MACHINE =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; do
+  MACHINE=$(demander "Nom de la machine (minuscules, chiffres, -) :" "cle-$IDENT")
+done
+
+HASH=$(conf mot_de_passe_hache)
+[[ $HASH =~ ^\$(6|y|5)\$[./A-Za-z0-9\$=,]+$ ]] || HASH=
+CHIFFRER=$(conf chiffrer)
+dans_liste "$CHIFFRER" oui non || {
+  if whiptail --title "$TITRE" --yesno "Chiffrer la clé ?\n\nOui : une phrase secrète sera demandée à chaque démarrage (recommandé si la clé contient des données personnelles).\nNon : la clé démarre sans phrase." 13 70; then CHIFFRER=oui; else CHIFFRER=non; fi
+}
+journal "clavier=$CLAVIER langue=$LANGUE identifiant=$IDENT machine=$MACHINE chiffrer=$CHIFFRER mot_de_passe=$([ -n "$HASH" ] && echo fourni || echo à_saisir)"
+
+# Secrets saisis maintenant, avant les opérations longues
+if [ -z "$HASH" ] && ! fait compte; then
+  MDP=$(secret_double "Mot de passe de $IDENT :" 6)
+  HASH=$(printf '%s' "$MDP" | openssl passwd -6 -stdin)
+  unset MDP
+fi
+if [ "$CHIFFRER" = oui ] && ! fait chiffrement; then
+  PHRASE=$(conf phrase_luks_test)   # tests automatiques uniquement ; l'application ne l'écrit jamais
+  [ -n "$PHRASE" ] || PHRASE=$(secret_double "Phrase secrète de chiffrement, demandée à chaque démarrage.\nSans elle, les données sont perdues : notez-la !" 8)
+fi
+
+# ---------------------------------------------------------------------------
+if ! fait systeme; then
+  journal "Clavier, langue, nom de machine"
+  sed -i -E "s/^# *($LANGUE .*)/\1/" /etc/locale.gen
+  grep -q "^$LANGUE " /etc/locale.gen || echo "$LANGUE UTF-8" >> /etc/locale.gen
+  locale-gen >/dev/null
+  echo "LANG=$LANGUE" > /etc/default/locale
+  setupcon --save-only
+  echo "$MACHINE" > /etc/hostname
+  hostname "$MACHINE"
+  sed -i -E "s/^127\.0\.1\.1\s.*/127.0.1.1\t$MACHINE/" /etc/hosts
+  marquer systeme
+fi
+
+if ! fait compte; then
+  journal "Compte $IDENT"
+  getent passwd "$IDENT" >/dev/null || useradd -m -s /bin/bash -c "$NOM" "$IDENT"
+  for g in sudo audio video plugdev netdev bluetooth lpadmin scanner; do
+    getent group "$g" >/dev/null && usermod -aG "$g" "$IDENT"
+  done
+  usermod -p "$HASH" "$IDENT"
+  marquer compte
+fi
+
+# Partition chiffrée et disque qui la porte
+PART=$(cryptsetup status "$CRYPT" | awk '$1 == "device:" {print $2}')
+DISQUE=/dev/$(lsblk -no PKNAME "$PART")
+NUM=$(cat "/sys/class/block/$(basename "$PART")/partition")
+journal "Volume : $PART (disque $DISQUE, partition $NUM)"
+
+# Rechiffrement avant l'agrandissement : seule la taille de l'image est à traiter
+if [ "$CHIFFRER" = oui ] && ! fait rechiffrement; then
+  journal "Rechiffrement du volume (nouvelle clé maîtresse) — quelques minutes"
+  cryptsetup reencrypt --batch-mode --key-file "$CLE_TMP" "$PART"
+  marquer rechiffrement
+fi
+
+if ! fait agrandissement; then
+  journal "Agrandissement à la taille de la clé"
+  sgdisk -e "$DISQUE" >/dev/null 2>&1 || true
+  rc=0; growpart "$DISQUE" "$NUM" || rc=$?
+  [ "$rc" -le 1 ] || echec "growpart (code $rc)"
+  partx -u "$DISQUE" || true
+  cryptsetup resize --key-file "$CLE_TMP" "$CRYPT"
+  pvresize "/dev/mapper/$CRYPT"
+  lvextend -r -l +100%FREE "$VG/root" || true
+  marquer agrandissement
+fi
+
+# La phrase de l'élève remplace la clé temporaire de l'image
+if [ "$CHIFFRER" = oui ] && ! fait chiffrement; then
+  journal "Phrase secrète de l'élève, retrait de la clé temporaire"
+  F=$(mktemp -p /run)
+  printf '%s' "$PHRASE" > "$F"
+  cryptsetup luksAddKey --batch-mode --key-file "$CLE_TMP" "$PART" "$F"
+  cryptsetup open --test-passphrase --key-file "$F" "$PART"
+  rm -f "$F"; unset PHRASE
+  cryptsetup luksRemoveKey --batch-mode "$PART" "$CLE_TMP"
+  rm -f "$CLE_TMP"
+  sed -i -E "s|^($CRYPT\s+\S+\s+)\S+|\1none|; s/,initramfs//" /etc/crypttab
+  marquer chiffrement
+fi
+
+journal "Initramfs (clavier, chiffrement)"
+update-initramfs -u -k all
+
+rm -f "$ETAT/a-configurer" "$ETAT"/fait-*
+EXTINCTION=$(conf eteindre_apres)   # tests automatiques
+rm -f "$CONF"
+journal "TERMINÉ $(lsblk -bno SIZE "/dev/$VG/root" | head -1) octets"
+sync
+
+if [ "$EXTINCTION" = oui ]; then systemctl --no-block poweroff; exit 0; fi
+whiptail --title "$TITRE" --msgbox "La clé est prête.\n\nConnectez-vous avec l'identifiant « $IDENT »." 10 60 || true
