@@ -62,6 +62,12 @@ secret_double() {  # secret_double <libellé> <longueur min> -> stdout
 }
 
 mkdir -p "$ETAT"
+# L'écran est à nous : plus de messages du noyau ni de lignes « Started … » de systemd, qui
+# recouvriraient les questions (l'élève verrait un écran figé alors qu'une question attend).
+dmesg -n 1 2>/dev/null || true
+kill -s RTMIN+21 1 2>/dev/null || true   # systemd : désactive l'affichage d'état sur la console
+chvt 1 2>/dev/null || true
+clear || true
 EXTINCTION=$(conf eteindre_apres)   # tests automatiques : s'éteindre à la fin, même en cas d'échec
 journal "Début (config.txt : $([ -f "$CONF" ] && echo présent || echo absent))"
 SB=$(od -An -t u1 -j4 -N1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | tr -d ' ' || true)

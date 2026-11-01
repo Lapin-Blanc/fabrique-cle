@@ -52,6 +52,7 @@ graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `
 ## Prochaines étapes
 
 ### Image
+- [x] Phrase secrète tapée au clavier virtuel par le test, question réellement visible (fond bleu détecté)
 - [ ] Test d'un **deuxième démarrage** jusqu'à SDDM (phrase LUKS tapée via QMP `send-key`, comme lors de
       l'installation manuelle), et du parcours **interactif** sans config.txt.
 - [ ] Test sans chiffrement (`chiffrer=non`).

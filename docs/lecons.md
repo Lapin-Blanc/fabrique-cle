@@ -24,6 +24,18 @@
   certains contrôleurs USB/NVMe).
 - RTC en heure locale pour cohabiter avec Windows sans décalage d'heure.
 
+## Premier démarrage (écran)
+
+- **Questions invisibles, écran figé** (vrai PC, 2026-11-01) : le service démarrait tôt, en parallèle ;
+  sa fenêtre whiptail était aussitôt recouverte par les lignes « Started … » de systemd et les messages
+  du noyau. L'élève voyait un démarrage arrêté alors qu'une question (phrase secrète) attendait.
+  Correctifs : service `After=plymouth-quit-wait.service systemd-user-sessions.service`,
+  `plymouth quit`, puis dans le script `dmesg -n 1`, `kill -s RTMIN+21 1` (systemd n'affiche plus
+  l'état), `chvt 1`, `clear`.
+- Le test CI passait car il fournissait la phrase dans `config.txt` (aucune question affichée). Il la
+  tape désormais au clavier virtuel (`sendkey`), seulement quand la capture d'écran est majoritairement
+  bleue (fond whiptail) : une question invisible fait échouer le test.
+
 ## Chiffrement
 
 - Clavier : sans `KEYMAP=y` (+ `setupcon --save-only`), la phrase LUKS se tape en QWERTY. Validé par

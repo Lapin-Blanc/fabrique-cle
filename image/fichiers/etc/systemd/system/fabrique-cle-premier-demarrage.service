@@ -1,11 +1,15 @@
 [Unit]
 Description=Fabrique-Clé : configuration au premier démarrage
 ConditionPathExists=/var/lib/fabrique-cle/a-configurer
+# Après la fin de l'écran de démarrage (plymouth) et des autres services : sinon leurs messages
+# recouvrent les questions et l'élève voit un écran figé (constaté sur un vrai PC).
 After=local-fs.target systemd-udev-settle.service systemd-vconsole-setup.service
+After=systemd-user-sessions.service plymouth-quit.service plymouth-quit-wait.service
 Before=display-manager.service getty@tty1.service
 
 [Service]
 Type=oneshot
+ExecStartPre=-/usr/bin/plymouth quit
 ExecStart=/usr/local/sbin/fabrique-cle-premier-demarrage
 StandardInput=tty
 StandardOutput=tty
@@ -13,6 +17,7 @@ StandardError=journal
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
+TTYVTDisallocate=yes
 TimeoutSec=0
 RemainAfterExit=yes
 
