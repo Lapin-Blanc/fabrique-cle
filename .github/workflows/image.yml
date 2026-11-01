@@ -57,7 +57,7 @@ jobs:
       - name: Compresser (zstd + bmap), découper sous 2 Gio
         run: |
           cd image/out
-          sudo chown "$USER" fabrique-cle.img
+          sudo chown -R "$USER" .
           bmaptool create fabrique-cle.img > fabrique-cle.img.bmap
           zstd -T0 -12 -q fabrique-cle.img -o fabrique-cle.img.zst
           sha256sum fabrique-cle.img.zst > fabrique-cle.img.zst.sha256
