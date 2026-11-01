@@ -34,6 +34,8 @@ Fichier image de 10 Gio (creux), monté en loop, dans un **espace de montage pri
   `force_efi_extra_removable=true`, `update_nvram=false` ; hook APT qui supprime `EFI/BOOT/fbx64.efi`.
 - RTC en heure locale (`/etc/adjtime` LOCAL), fuseau Europe/Brussels, zram zstd 50 %, `fstrim.timer`.
 - `machine-id` vide (régénéré par clé), pas de compte utilisateur (créé au 1er démarrage), root verrouillé.
+- Cache APT **hors de l'image** (montage lié d'un dossier de l'hôte sur `/var/cache/apt/archives`, aussi
+  pendant mmdebstrap) : les `.deb` effacés laisseraient des blocs libres incompressibles.
 - Fin : `fstrim` (image creuse → bonne compression), démontage strict.
 
 ## 2. Premier démarrage (`fabrique-cle-premier-demarrage` + service systemd)
@@ -79,7 +81,8 @@ application avec une nouvelle image et inversement).
 ## 5. CI (`.github/workflows/image.yml`)
 
 Push sur `image/**` : construction → test QEMU → compression zstd + bmap + sha256 → artefact 7 jours.
-Garde-fou : échec si l'image compressée dépasse 4 Go (signe d'un volume chiffré dans l'image).
+Garde-fou : échec si l'image compressée dépasse 3 Go (signe d'un volume chiffré dans l'image ou de blocs
+libres « sales »). Découpage en `*.part00…` au-delà de 2 000 Mio (limite GitHub : 2 Gio par fichier).
 Étiquette `v*` : idem + release GitHub. Le test démarre une **copie agrandie de 6 Gio** de l'image en
 **clé USB xHCI**, OVMF **Secure Boot avec clés Microsoft**, NVRAM vierge, puis inspecte la clé hors ligne
 (15 vérifications, dont « AES-XTS, plus de `cipher_null` »). En cas d'échec : capture d'écran `ecran.ppm` et journal en artefact.

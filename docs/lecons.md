@@ -36,6 +36,10 @@
   précisant `--cipher` (par défaut, `reencrypt` garde le chiffrement actuel, donc `cipher_null` !).
   Écarté : `reencrypt --encrypt --reduce-device-size` (décalage des données, à faire hors ligne dans
   l'initramfs : bien plus complexe).
+- **`.deb` téléchargés dans l'image = ~1,4 Gio de blocs libres incompressibles** : après `apt-get clean`,
+  `fstrim` (à travers LVM et dm-crypt) n'a rendu au fichier que 1,7 Gio sur ~3,1 Gio libres. Cache APT
+  monté depuis l'hôte pendant la construction : 3 Gio rendus, 7 168 → 5 833 Mio alloués, 3,47 → 2,06 Go
+  compressés. Le script affiche « Blocs alloués dans le fichier image » : à surveiller.
 - Avec `set -o pipefail`, éviter `cryptsetup luksDump | grep -q` (SIGPIPE possible) : lire l'en-tête
   dans une variable.
 - `cryptsetup resize` après suppression de la clé temporaire peut demander un secret : agrandir **avant**
