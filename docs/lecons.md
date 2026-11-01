@@ -22,7 +22,11 @@
   `uas_eh_abort_handler` dans `journalctl -k`.
 - Matériel inconnu : `MODULES=most` dans l'initramfs (sinon la clé ne trouve pas son propre disque sur
   certains contrôleurs USB/NVMe).
-- RTC en heure locale pour cohabiter avec Windows sans décalage d'heure.
+- RTC en heure locale pour cohabiter avec Windows sans décalage d'heure. Revers : sur un PC Linux
+  (RTC en UTC, ex. Zorin), la clé démarre avec une heure de décalage (constaté : 1 h de retard en
+  hiver). D'où **`systemd-timesyncd`** (absent de la variante `important` de mmdebstrap : « NTP
+  service: n/a ») : l'heure se corrige dès que la clé est en ligne. Avec la RTC en heure locale,
+  systemd n'écrit jamais l'horloge matérielle : l'heure du système hôte n'est pas modifiée.
 
 ## Premier démarrage (écran)
 
@@ -90,6 +94,12 @@
 - AppImage + pkexec : root ne peut pas lire le montage FUSE de l'AppImage → relancer `$APPIMAGE`.
 - Windows : une application élevée (administrateur) ne reçoit pas le glisser-déposer de l'Explorateur
   (UIPI) → bouton « Parcourir… » (crate `rfd`).
+
+- Téléchargement par morceaux (`Range`) : GitHub le permet, y compris après la redirection vers
+  `release-assets.githubusercontent.com` (vérifié avec curl : 206). Repli automatique sur un seul
+  flux si la sonde ou tous les morceaux échouent (proxy, pare-feu). Le proxy des sessions Claude
+  Code dans le nuage casse les réponses de GitHub pour `ureq` (« chunk expected crlf ») : à tester
+  sur un vrai PC (`cargo test morceau_reel -- --ignored`).
 
 ## Essais de distributions (historique)
 

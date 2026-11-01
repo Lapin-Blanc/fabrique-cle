@@ -24,7 +24,7 @@ pub const LANGUES: [(&str, &str); 5] = [
 /// Longueur minimale du mot de passe (même valeur que l'image).
 pub const MOT_DE_PASSE_MIN: usize = 6;
 
-/// Comptes déjà présents dans l'image : l'identifiant de l'élève ne peut pas les reprendre.
+/// Comptes déjà présents dans l'image : l'identifiant de l'utilisateur ne peut pas les reprendre.
 const COMPTES_RESERVES: &[&str] = &[
     "root",
     "daemon",

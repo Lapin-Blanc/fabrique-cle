@@ -12,7 +12,7 @@
 # clair, donc compressible (un volume chiffré ne se compresse pas : 7,5 Go au lieu de ~2 Go). Il est
 # ouvert par une clé temporaire incluse dans l'initramfs ; si chiffrer=oui, le service de premier
 # démarrage le chiffre en ligne en AES-XTS (nouvelle clé maîtresse, propre à chaque clé USB), puis
-# remplace la clé temporaire par la phrase de l'élève.
+# remplace la clé temporaire par la phrase de l'utilisateur.
 set -euo pipefail
 
 ICI=$(dirname "$(readlink -f "$0")")
@@ -257,7 +257,7 @@ chroot "$MNT" apt-get update -qq
 chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold \
   linux-image-amd64 cryptsetup cryptsetup-initramfs lvm2 \
   grub-efi-amd64 grub-efi-amd64-signed shim-signed \
-  sudo zram-tools cloud-guest-utils gdisk whiptail \
+  sudo zram-tools cloud-guest-utils gdisk whiptail systemd-timesyncd \
   intel-microcode amd64-microcode \
   kde-plasma-desktop sddm plasma-nm network-manager \
   pipewire-audio wireplumber bluez bluedevil \

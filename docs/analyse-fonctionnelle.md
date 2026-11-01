@@ -10,9 +10,12 @@ telle clé eux-mêmes, avec quelques personnalisations.
 
 ## Utilisateurs
 
+Les textes affichés (application, premier démarrage) ne supposent pas un public scolaire :
+« vous », « l'utilisateur », jamais « l'élève ».
+
 | Qui | Contexte | Attentes |
 |---|---|---|
-| Élève | PC personnel **Windows** ou **Linux**, droits administrateur, peu d'expérience | un exécutable, quelques champs, un bouton, une clé qui marche |
+| Utilisateur (élève au départ, mais tout public) | PC personnel **Windows** ou **Linux**, droits administrateur, peu d'expérience | un exécutable, quelques champs, un bouton, une clé qui marche |
 | Enseignant (mainteneur) | Linux (Zorin OS), GitHub | publier une nouvelle image sans manipulations manuelles ; ajuster le contenu de l'image |
 
 ## Parcours de l'élève
