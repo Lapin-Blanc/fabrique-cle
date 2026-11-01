@@ -36,7 +36,12 @@ Fichier image de 10 Gio (creux), monté en loop, dans un **espace de montage pri
 - `machine-id` vide (régénéré par clé), pas de compte utilisateur (créé au 1er démarrage), root verrouillé.
 - Cache APT **hors de l'image** (montage lié d'un dossier de l'hôte sur `/var/cache/apt/archives`, aussi
   pendant mmdebstrap) : les `.deb` effacés laisseraient des blocs libres incompressibles.
-- Fin : `fstrim` (image creuse → bonne compression), démontage strict.
+- Allègement (firmwares et pilotes tous gardés : clé polyvalente) : pas de documentation, de pages de
+  manuel ni d'info (`path-exclude` dpkg écrits par mmdebstrap dans `/etc/dpkg/dpkg.cfg.d/99mmdebstrap`,
+  licences gardées) ; pas de `fonts-noto-extra`, `fonts-noto-cjk-extra`, `fonts-noto-ui-extra` (graisses
+  supplémentaires seulement : toutes les écritures restent couvertes).
+- Fin : `fstrim` de l'ESP, puis au démontage `e2fsck -f -p -E discard` sur `/boot` et la racine (tous les
+  blocs libres rendus au fichier, de façon reproductible), démontage strict.
 
 ## 2. Premier démarrage (`fabrique-cle-premier-demarrage` + service systemd)
 
@@ -76,11 +81,12 @@ application avec une nouvelle image et inversement).
 - Écriture de `config.txt` **dans la FAT de la partition 1 directement sur le périphérique brut** (crate
   `fatfs`), car Windows n'attribue pas de lettre à une ESP.
 - Mot de passe haché localement (crate `sha-crypt`, SHA-512 crypt).
-- Liste des versions : API GitHub releases du dépôt ; image en morceaux `*.part00…` si > 2 Gio.
+- Liste des versions : API GitHub releases du dépôt ; image en morceaux `*.part00…` si > 2 000 Mio.
+- Décodeur zstd : fenêtre jusqu'à 128 Mio (`--long=27`), limite par défaut de la crate `zstd`.
 
 ## 5. CI (`.github/workflows/image.yml`)
 
-Push sur `image/**` : construction → test QEMU → compression zstd + bmap + sha256 → artefact 7 jours.
+Push sur `image/**` : construction → test QEMU → compression zstd (`-12 --long=27`) + bmap + sha256 → artefact 7 jours.
 Garde-fou : échec si l'image compressée dépasse 3 Go (signe d'un volume chiffré dans l'image ou de blocs
 libres « sales »). Découpage en `*.part00…` au-delà de 2 000 Mio (limite GitHub : 2 Gio par fichier).
 Étiquette `v*` : idem + release GitHub. Le test démarre une **copie agrandie de 6 Gio** de l'image en

@@ -17,7 +17,7 @@
 - [x] Workflow complet vert (construction, test, compression, artefact) — run 41296826593, 11 min 34 s
 - [ ] Première release `v2026.11`
 
-## Taille de l'image compressée — traité (7,5 Go → 2,06 Go)
+## Taille de l'image compressée — traité (7,5 Go → < 1,9 Go, un seul fichier)
 
 Constaté le 2026-11-01 : `fabrique-cle.img.zst` = 7,5 Go alors que le système occupe 5,2 Go. Cause : le
 volume est **chiffré dans l'image**, donc incompressible ; et une partie de l'espace libre chiffré n'est
@@ -40,8 +40,13 @@ chiffrement en ligne ≈ 1 min 40 dans QEMU).
 Mesures (zstd -12) : volume chiffré 7,5 Go → `cipher_null` 3,47 Go → + cache APT hors de l'image
 **2,06 Go**, sous la limite de 2 Gio par fichier de release (seuil de découpage porté à 2 000 Mio).
 Le contenu lui-même (modules `.ko.xz`, firmwares `.zst`, Firefox) est déjà compressé : ratio ~2,8× sur
-les 5,8 Gio alloués. La CI échoue au-delà de 3 Go. Marge faible : si l'image grossit, alléger
-(documentation, pages de manuel, firmwares rares) ou accepter deux morceaux (déjà géré).
+les 5,8 Gio alloués. La CI échoue au-delà de 3 Go.
+
+Deuxième passe : le build suivant sur `main` donnait 2 143 Mo (deux morceaux) à cause de `fstrim`,
+variable. Corrigé par `e2fsck -E discard` au démontage ; allègement sans toucher aux firmwares (doc, man,
+graisses supplémentaires des polices Noto) : **1 893 Mo** (run 41304716205), puis `zstd --long=27`
+(≈ −5 %). Marge d'environ 300 Mo sous le seuil de découpage. Piste suivante si besoin : traductions
+(`/usr/share/locale`, 512 Mio, 214 langues) limitées aux langues proposées — à décider.
 
 ## Prochaines étapes
 
