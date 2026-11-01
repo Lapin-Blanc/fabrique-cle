@@ -16,3 +16,10 @@ utilisable sur n'importe quel PC UEFI (Secure Boot compris), sans toucher au PC 
    personnalisation sur la partition EFI.
 3. Au premier démarrage, la clé applique la personnalisation (compte, nom de machine, clavier),
    s'agrandit à sa taille réelle et, si demandé, remplace la clé de chiffrement temporaire.
+
+## Documentation
+
+- [Analyse fonctionnelle](docs/analyse-fonctionnelle.md)
+- [Architecture](docs/architecture.md)
+- [Leçons tirées des essais](docs/lecons.md)
+- [Feuille de route](docs/feuille-de-route.md)
