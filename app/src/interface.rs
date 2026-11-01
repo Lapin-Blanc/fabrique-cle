@@ -333,13 +333,36 @@ impl Appli {
         .map(|e| ui.label(egui::RichText::new(e).small().weak()));
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.mode, ModeImage::Locale, "Fichier :");
-            let r = ui.add_enabled(
-                self.mode == ModeImage::Locale,
-                egui::TextEdit::singleline(&mut self.chemin_local)
-                    .hint_text("glisser ici un fichier .img.zst")
-                    .desired_width(ui.available_width()),
-            );
-            r.on_hover_text("Image téléchargée à part (.img.zst ou .img) ; .bmap et .sha256 lus à côté s'ils existent.");
+            // Bouton à droite, champ dans l'espace restant.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Sous Windows, l'application tourne en administrateur : Windows interdit alors le
+                // glisser-déposer depuis l'Explorateur. Le bouton est le moyen principal.
+                if ui.button("Parcourir…").clicked() {
+                    let mut dialogue = rfd::FileDialog::new()
+                        .set_title("Choisir l'image Fabrique-Clé")
+                        .add_filter("Image Fabrique-Clé (.img.zst, .img)", &["zst", "img"])
+                        .add_filter("Tous les fichiers", &["*"]);
+                    let actuel = PathBuf::from(self.chemin_local.trim());
+                    if let Some(dossier) = actuel.parent().filter(|d| d.is_dir()) {
+                        dialogue = dialogue.set_directory(dossier);
+                    }
+                    if let Some(p) = dialogue.pick_file() {
+                        self.chemin_local = p.display().to_string();
+                        self.mode = ModeImage::Locale;
+                    }
+                }
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut self.chemin_local)
+                        .hint_text("chemin d'un fichier .img.zst")
+                        .desired_width(ui.available_width()),
+                );
+                if r.changed() {
+                    self.mode = ModeImage::Locale;
+                }
+                r.on_hover_text(
+                    "Image téléchargée à part (.img.zst ou .img) ; .bmap et .sha256 lus à côté s'ils existent.",
+                );
+            });
         });
     }
 

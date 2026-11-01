@@ -54,6 +54,8 @@
 - Windows : lectures/écritures d'un disque brut alignées sur le secteur → `fatfs` passe par une fenêtre
   à blocs de 4096 octets (`esp.rs`).
 - AppImage + pkexec : root ne peut pas lire le montage FUSE de l'AppImage → relancer `$APPIMAGE`.
+- Windows : une application élevée (administrateur) ne reçoit pas le glisser-déposer de l'Explorateur
+  (UIPI) → bouton « Parcourir… » (crate `rfd`).
 
 ## Essais de distributions (historique)
 
