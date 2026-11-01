@@ -14,6 +14,7 @@ mod esp;
 mod interface;
 mod releases;
 mod suivi;
+mod theme;
 mod travail;
 
 fn main() -> eframe::Result {
@@ -22,12 +23,20 @@ fn main() -> eframe::Result {
         std::process::exit(assistant::servir());
     }
 
+    let mut viewport = eframe::egui::ViewportBuilder::default();
+    if let Some((rgba, width, height)) = theme::icone() {
+        viewport = viewport.with_icon(eframe::egui::IconData {
+            rgba,
+            width,
+            height,
+        });
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
+        viewport: viewport
             .with_title("Fabrique-Clé")
             .with_app_id("fabrique-cle")
-            .with_inner_size([620.0, 720.0])
-            .with_min_inner_size([520.0, 480.0])
+            .with_inner_size([640.0, 820.0])
+            .with_min_inner_size([540.0, 560.0])
             .with_drag_and_drop(true),
         ..Default::default()
     };
