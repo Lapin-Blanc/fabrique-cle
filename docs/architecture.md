@@ -32,7 +32,7 @@ Fichier image de 10 Gio (creux), monté en loop, dans un **espace de montage pri
   la **clé temporaire** de l'image est incluse dans l'initramfs (`KEYFILE_PATTERN`) : le 1er démarrage ne demande rien.
 - GRUB : `grub-install --uefi-secure-boot --no-nvram --force-extra-removable`, debconf
   `force_efi_extra_removable=true`, `update_nvram=false` ; hook APT qui supprime `EFI/BOOT/fbx64.efi`.
-- RTC en heure locale (`/etc/adjtime` LOCAL), fuseau Europe/Brussels, zram zstd 50 %, `fstrim.timer`.
+- RTC en heure locale (`/etc/adjtime` LOCAL), `systemd-timesyncd` (heure réseau), fuseau Europe/Brussels, zram zstd 50 %, `fstrim.timer`.
 - `machine-id` vide (régénéré par clé), pas de compte utilisateur (créé au 1er démarrage), root verrouillé.
 - Cache APT **hors de l'image** (montage lié d'un dossier de l'hôte sur `/var/cache/apt/archives`, aussi
   pendant mmdebstrap) : les `.deb` effacés laisseraient des blocs libres incompressibles.
@@ -79,6 +79,7 @@ clé USB → image (version publiée ou fichier local glissé) → personnalisat
 |---|---|
 | `config.rs` | champs, validation **identique** au premier démarrage (regex, listes), `config.txt`, hachage SHA-512 crypt (sel 16 caractères, cf. `lecons.md`) |
 | `releases.rs` | versions via l'API GitHub ; si quota dépassé (60 req/h par IP, NAT d'école) : `releases/latest/download/…` ; téléchargement des morceaux `*.part00…` dans un cache indexé par SHA-256 (réutilisé pour plusieurs clés) ; certificats du système (proxys d'école) |
+| `telechargement.rs` | téléchargement en 8 connexions parallèles (morceaux de 8 Mio, requêtes `Range`), écrits à leur place dans le fichier ; fichier `.etat` des morceaux terminés : **reprise** après coupure ; repli sur un seul flux si les morceaux ne passent pas |
 | `ecriture.rs` | zstd en flux (fenêtre jusqu'à 2 Gio : l'image est compressée en `--long=27`), n'écrit que les plages du `.bmap`, efface le dernier Mio (ancienne GPT de secours), puis **relit et vérifie** chaque plage (SHA-256 du bmap, cache noyau vidé) |
 | `esp.rs` | lit la GPT, trouve l'ESP, écrit `fabrique-cle/config.txt` avec `fatfs` à travers une fenêtre aux E/S alignées sur 4096 (exigé par Windows), puis relit |
 | `disques/linux.rs` | sysfs : disques dont le chemin passe par `/usb`, hors disques système (racine, /boot, /home…, swap, en traversant LUKS/LVM via `slaves`) ; refus si un volume LUKS/LVM est ouvert ; `umount`, ouverture `O_EXCL`, `BLKFLSBUF`, `BLKRRPART` |

@@ -2,7 +2,7 @@
 # Teste une image Fabrique-Clé dans QEMU, comme une vraie clé USB sur un PC inconnu :
 # OVMF Secure Boot (clés Microsoft), NVRAM vierge, disque USB plus grand que l'image.
 # Le premier démarrage est piloté par un config.txt de test (chiffrement compris) ; la phrase
-# secrète est tapée au clavier virtuel, comme le ferait l'élève, une fois la question réellement
+# secrète est tapée au clavier virtuel, comme le ferait l'utilisateur, une fois la question réellement
 # visible à l'écran. L'image testée est ensuite inspectée hors ligne.
 #
 #   sudo ./tester-image.sh out/fabrique-cle.img
@@ -96,7 +96,7 @@ QEMU=$!
   done ) &
 
 # ---------------------------------------------------------------------------
-# Saisie de la phrase, comme l'élève : seulement quand la question est visible à l'écran.
+# Saisie de la phrase, comme l'utilisateur : seulement quand la question est visible à l'écran.
 moniteur() {  # commande pour le moniteur QEMU (réessaie si la capture périodique l'occupe)
   local i
   for i in 1 2 3 4 5; do
@@ -166,7 +166,7 @@ verifier "config.txt effacé de l'ESP" "mount -o ro ${LOOP}p1 $MNT && [ ! -e $MN
 verifier "pas de fbx64.efi dans EFI/BOOT" "mount -o ro ${LOOP}p1 $MNT && [ ! -e $MNT/EFI/BOOT/fbx64.efi ]; r=\$?; umount $MNT; exit \$r"
 verifier "clé temporaire de l'image refusée" "! cryptsetup open --test-passphrase --key-file '$CLE_TMP' $P3"
 verifier "volume chiffré en AES-XTS, plus de cipher_null" "d=\$(cryptsetup luksDump $P3); grep -qE '^\s+cipher:\s+aes-xts-plain64' <<<\"\$d\" && ! grep -q cipher_null <<<\"\$d\""
-verifier "une seule phrase (celle de l'élève)" "[ \$(cryptsetup luksDump $P3 | grep -cE '^ +[0-9]+: luks2') -eq 1 ]"
+verifier "une seule phrase (celle de l'utilisateur)" "[ \$(cryptsetup luksDump $P3 | grep -cE '^ +[0-9]+: luks2') -eq 1 ]"
 printf '%s' "$PHRASE" | cryptsetup open --key-file - "$P3" "$CRYPT"
 vgchange -ay "$VG" >/dev/null
 mount -o ro "/dev/$VG/root" "$MNT"
@@ -177,6 +177,7 @@ verifier "nom de machine cle-test" "[ \"\$(cat $MNT/etc/hostname)\" = cle-test ]
 verifier "crypttab sans clé temporaire" "grep -qE '^fabcle_crypt\\s+\\S+\\s+none\\s' $MNT/etc/crypttab"
 verifier "plus de fichier de clé temporaire" "[ ! -e $MNT/etc/cryptsetup-keys.d/fabcle_crypt.key ]"
 verifier "machine-id générée au démarrage" "[ -s $MNT/etc/machine-id ]"
+verifier "synchronisation de l'heure (systemd-timesyncd) activée" "[ -e $MNT/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service ]"
 verifier "état de premier démarrage effacé" "[ ! -e $MNT/var/lib/fabrique-cle/a-configurer ]"
 umount "$MNT"
 vgchange -an "$VG" >/dev/null; cryptsetup close "$CRYPT"

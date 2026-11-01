@@ -2,9 +2,9 @@
 # Fabrique-Clé — configuration au premier démarrage (lancé par systemd sur tty1, avant SDDM).
 #
 # 1. lit /boot/efi/fabrique-cle/config.txt (écrit par l'application ; sinon questions à l'écran)
-# 2. clavier, langue, nom de machine, compte de l'élève
+# 2. clavier, langue, nom de machine, compte de l'utilisateur
 # 3. si chiffrer=oui : chiffre le volume en AES-XTS (l'image est publiée en LUKS2 cipher_null, donc en
-#    clair), ajoute la phrase de l'élève, retire la clé temporaire de l'image ;
+#    clair), ajoute la phrase de l'utilisateur, retire la clé temporaire de l'image ;
 #    si chiffrer=non : le volume reste en cipher_null (non chiffré), ouvert par la clé temporaire
 # 4. agrandit le système à la taille réelle de la clé
 # 5. régénère l'initramfs, efface la configuration
@@ -63,7 +63,7 @@ secret_double() {  # secret_double <libellé> <longueur min> -> stdout
 
 mkdir -p "$ETAT"
 # L'écran est à nous : plus de messages du noyau ni de lignes « Started … » de systemd, qui
-# recouvriraient les questions (l'élève verrait un écran figé alors qu'une question attend).
+# recouvriraient les questions (l'utilisateur verrait un écran figé alors qu'une question attend).
 dmesg -n 1 2>/dev/null || true
 kill -s RTMIN+21 1 2>/dev/null || true   # systemd : désactive l'affichage d'état sur la console
 chvt 1 2>/dev/null || true
@@ -178,9 +178,9 @@ if ! fait agrandissement; then
   marquer agrandissement
 fi
 
-# La phrase de l'élève remplace la clé temporaire de l'image
+# La phrase de l'utilisateur remplace la clé temporaire de l'image
 if [ "$CHIFFRER" = oui ] && ! fait chiffrement; then
-  journal "Phrase secrète de l'élève, retrait de la clé temporaire"
+  journal "Phrase secrète enregistrée, retrait de la clé temporaire"
   F=$(mktemp -p /run)
   printf '%s' "$PHRASE" > "$F"
   cryptsetup luksAddKey --batch-mode --key-file "$CLE_TMP" "$PART" "$F"

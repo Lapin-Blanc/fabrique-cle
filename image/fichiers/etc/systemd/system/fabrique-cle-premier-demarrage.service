@@ -2,7 +2,7 @@
 Description=Fabrique-Clé : configuration au premier démarrage
 ConditionPathExists=/var/lib/fabrique-cle/a-configurer
 # Après la fin de l'écran de démarrage (plymouth) et des autres services : sinon leurs messages
-# recouvrent les questions et l'élève voit un écran figé (constaté sur un vrai PC).
+# recouvrent les questions et l'utilisateur voit un écran figé (constaté sur un vrai PC).
 After=local-fs.target systemd-udev-settle.service systemd-vconsole-setup.service
 After=systemd-user-sessions.service plymouth-quit.service plymouth-quit-wait.service
 Before=display-manager.service getty@tty1.service

@@ -73,7 +73,9 @@ graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `
       (config.txt lu, questions à l'écran) → clé fonctionnelle sur le HP ProBook 455 — 2026-11-01
 - [ ] Vérifier explicitement les deux plateformes d'écriture : Windows (UAC, verrouillage des volumes)
       et Linux (Zorin, assistant pkexec)
-- [ ] Icône de fenêtre et d'exécutable Windows ; reprise d'un téléchargement interrompu
+- [x] Apparence soignée (police Inter, thèmes clair/sombre, cartes), icône de fenêtre
+- [x] Téléchargement parallèle avec reprise après coupure (repli sur un seul flux)
+- [ ] Icône de l'exécutable Windows (ressource .ico)
 - [ ] Signature de code Windows (SmartScreen) : à évaluer (payant)
 
 ## Limites connues de l'environnement cloud
