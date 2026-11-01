@@ -187,7 +187,7 @@ EOF
 journal "Paquets : noyau, chiffrement, GRUB, Plasma minimal, firmwares"
 chroot "$MNT" locale-gen
 chroot "$MNT" apt-get update -qq
-chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold \
   linux-image-amd64 cryptsetup cryptsetup-initramfs lvm2 \
   grub-efi-amd64 grub-efi-amd64-signed shim-signed \
   sudo zram-tools cloud-guest-utils gdisk whiptail \
