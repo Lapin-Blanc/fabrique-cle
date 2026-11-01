@@ -17,7 +17,7 @@
 - [x] Workflow complet vert (construction, test, compression, artefact) — run 41296826593, 11 min 34 s
 - [ ] Première release `v2026.11`
 
-## Problème prioritaire : taille de l'image compressée (7,5 Go, 4 morceaux)
+## Taille de l'image compressée (7,5 Go, 4 morceaux) — traité, à confirmer en CI
 
 Constaté le 2026-11-01 : `fabrique-cle.img.zst` = 7,5 Go alors que le système occupe 5,2 Go. Cause : le
 volume est **chiffré dans l'image**, donc incompressible ; et une partie de l'espace libre chiffré n'est
@@ -29,6 +29,14 @@ Piste recommandée : publier l'image **non chiffrée** (LVM sur p3 en clair, com
 ligne : il faut le faire **dans l'initramfs** (script `local-top` avant le montage de la racine, déclenché
 par un marqueur posé par le service de premier démarrage, puis redémarrage). Bonus : plus besoin de clé
 temporaire ni de rechiffrement. À prototyper et à couvrir par `tester-image.sh`.
+
+**Solution retenue (2026-11-01)**, plus simple que la piste initramfs : le volume LUKS2 de l'image est
+créé en **`cipher_null`** (données en clair, donc compressibles), et le service de premier démarrage le
+chiffre **en ligne** en AES-XTS avec `cryptsetup reencrypt --cipher aes-xts-plain64 --key-size 512` —
+le même mécanisme que le rechiffrement déjà testé, sans décalage de données ni script initramfs.
+Le test vérifie qu'il ne reste aucun segment `cipher_null` ; la CI échoue si l'image compressée dépasse
+4 Go. À faire : relever la taille obtenue ; ensuite, si > 2 Gio, voir s'il faut alléger (firmwares,
+documentation, locales) pour tenir en un seul fichier.
 
 ## Prochaines étapes
 
