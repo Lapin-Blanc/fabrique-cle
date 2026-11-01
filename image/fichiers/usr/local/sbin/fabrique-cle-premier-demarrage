@@ -3,8 +3,9 @@
 #
 # 1. lit /boot/efi/fabrique-cle/config.txt (écrit par l'application ; sinon questions à l'écran)
 # 2. clavier, langue, nom de machine, compte de l'élève
-# 3. si chiffrer=oui : rechiffre le volume (nouvelle clé maîtresse), ajoute la phrase de l'élève,
-#    retire la clé temporaire de l'image
+# 3. si chiffrer=oui : chiffre le volume en AES-XTS (l'image est publiée en LUKS2 cipher_null, donc en
+#    clair), ajoute la phrase de l'élève, retire la clé temporaire de l'image ;
+#    si chiffrer=non : le volume reste en cipher_null (non chiffré), ouvert par la clé temporaire
 # 4. agrandit le système à la taille réelle de la clé
 # 5. régénère l'initramfs, efface la configuration
 #
@@ -138,10 +139,24 @@ DISQUE=/dev/$(lsblk -dno PKNAME "$PART")
 NUM=$(cat "/sys/class/block/$(basename "$PART")/partition")
 journal "Volume : $PART (disque $DISQUE, partition $NUM)"
 
-# Rechiffrement avant l'agrandissement : seule la taille de l'image est à traiter
+# Chiffrement en ligne (cipher_null -> AES-XTS, nouvelle clé maîtresse), avant l'agrandissement :
+# seule la taille de l'image est à traiter. LUKS2 note la progression dans l'en-tête : après une
+# coupure, l'initramfs ouvre le volume à moitié chiffré et on reprend avec --resume-only.
 if [ "$CHIFFRER" = oui ] && ! fait rechiffrement; then
-  journal "Rechiffrement du volume (nouvelle clé maîtresse) — quelques minutes"
-  cryptsetup reencrypt --batch-mode --key-file "$CLE_TMP" "$PART"
+  # (en-tête lu dans une variable : « luksDump | grep -q » peut échouer en SIGPIPE avec pipefail)
+  ENTETE=$(cryptsetup luksDump "$PART")
+  if grep -q 'online-reencrypt' <<<"$ENTETE"; then
+    journal "Reprise du chiffrement interrompu"
+    cryptsetup reencrypt --batch-mode --resume-only --key-file "$CLE_TMP" "$PART"
+  else
+    journal "Chiffrement du volume (AES-XTS, nouvelle clé maîtresse) — quelques minutes"
+    cryptsetup reencrypt --batch-mode --key-file "$CLE_TMP" \
+      --cipher aes-xts-plain64 --key-size 512 "$PART"
+  fi
+  ENTETE=$(cryptsetup luksDump "$PART")
+  grep -E '^\s+cipher:' <<<"$ENTETE" >&3 || true
+  grep -qE '^\s+cipher:\s+aes-xts-plain64' <<<"$ENTETE" || echec "volume non chiffré après reencrypt"
+  ! grep -q cipher_null <<<"$ENTETE" || echec "segment cipher_null restant"
   marquer rechiffrement
 fi
 

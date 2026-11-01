@@ -118,7 +118,8 @@ verifier() { if (eval "$2"); then echo "OK    $1"; else echo "ÉCHEC $1"; ERR=1;
 verifier "config.txt effacé de l'ESP" "mount -o ro ${LOOP}p1 $MNT && [ ! -e $MNT/fabrique-cle/config.txt ]; r=\$?; umount $MNT; exit \$r"
 verifier "pas de fbx64.efi dans EFI/BOOT" "mount -o ro ${LOOP}p1 $MNT && [ ! -e $MNT/EFI/BOOT/fbx64.efi ]; r=\$?; umount $MNT; exit \$r"
 verifier "clé temporaire de l'image refusée" "! cryptsetup open --test-passphrase --key-file '$CLE_TMP' $P3"
-verifier "une seule phrase (celle de l'élève)" "[ \$(cryptsetup luksDump $P3 | grep -cE '^ +[0-9]+: luks2') -eq 1 ]"
+verifier "volume chiffré en AES-XTS, plus de cipher_null" "d=\$(cryptsetup luksDump $P3); grep -qE '^\s+cipher:\s+aes-xts-plain64' <<<\"\$d\" && ! grep -q cipher_null <<<\"\$d\""
+verifier "une seule phrase (celle de l'élève)""[ \$(cryptsetup luksDump $P3 | grep -cE '^ +[0-9]+: luks2') -eq 1 ]"
 printf '%s' "$PHRASE" | cryptsetup open --key-file - "$P3" "$CRYPT"
 vgchange -ay "$VG" >/dev/null
 mount -o ro "/dev/$VG/root" "$MNT"
