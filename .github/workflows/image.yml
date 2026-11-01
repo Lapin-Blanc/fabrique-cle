@@ -51,6 +51,7 @@ jobs:
           path: |
             image/out/test/ecran.ppm
             image/out/test/serie.log
+            image/out/test/fabrique-cle.log
           if-no-files-found: ignore
 
       - name: Compresser (zstd + bmap), découper sous 2 Gio

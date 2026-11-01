@@ -88,7 +88,19 @@ QEMU=$!
     echo "screendump $TRAV/ecran.ppm" | socat - UNIX-CONNECT:"$TRAV/monitor.sock" >/dev/null 2>&1 || true
   done ) &
 wait $QEMU || rc=$?
-[ "$rc" -eq 0 ] || { echo "ÉCHEC : QEMU code $rc (124 = délai dépassé ; voir $TRAV/ecran.ppm)"; exit 1; }
+if [ "$rc" -ne 0 ]; then echo "ÉCHEC : QEMU code $rc (124 = délai dépassé ; voir $TRAV/ecran.ppm)"; fi
+
+# Journal du premier démarrage (clé temporaire ou phrase de test, selon l'étape atteinte)
+attacher
+if cryptsetup open --key-file "$CLE_TMP" "${LOOP}p3" "$CRYPT" 2>/dev/null || \
+   printf '%s' "$PHRASE" | cryptsetup open --key-file - "${LOOP}p3" "$CRYPT" 2>/dev/null; then
+  vgchange -ay "$VG" >/dev/null; mount -o ro "/dev/$VG/root" "$MNT"
+  echo "--- journal du premier démarrage ---"; cat "$MNT/var/log/fabrique-cle.log" || true; echo "---"
+  cp "$MNT/var/log/fabrique-cle.log" "$TRAV/" 2>/dev/null || true
+  umount "$MNT"; vgchange -an "$VG" >/dev/null; cryptsetup close "$CRYPT"
+fi
+detacher
+[ "$rc" -eq 0 ] || exit 1
 
 # ---------------------------------------------------------------------------
 journal "Inspection de la clé après le premier démarrage"
@@ -104,7 +116,6 @@ verifier "une seule phrase (celle de l'élève)" "[ \$(cryptsetup luksDump $P3 |
 printf '%s' "$PHRASE" | cryptsetup open --key-file - "$P3" "$CRYPT"
 vgchange -ay "$VG" >/dev/null
 mount -o ro "/dev/$VG/root" "$MNT"
-echo "--- journal du premier démarrage ---"; cat "$MNT/var/log/fabrique-cle.log"; echo "---"
 verifier "premier démarrage terminé" "grep -q TERMINÉ $MNT/var/log/fabrique-cle.log"
 verifier "démarré avec Secure Boot actif" "grep -q 'Secure Boot : 1' $MNT/var/log/fabrique-cle.log"
 verifier "compte eleve créé, membre de sudo" "grep -q '^eleve:' $MNT/etc/passwd && grep -qE '^sudo:.*\\beleve\\b' $MNT/etc/group"

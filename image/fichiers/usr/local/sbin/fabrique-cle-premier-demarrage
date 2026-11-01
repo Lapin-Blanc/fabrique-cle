@@ -27,6 +27,7 @@ fait() { [ -e "$ETAT/fait-$1" ]; }
 marquer() { touch "$ETAT/fait-$1"; }
 echec() {
   journal "ÉCHEC : $*"
+  if [ "${EXTINCTION:-}" = oui ]; then systemctl --no-block poweroff; exit 1; fi
   whiptail --title "$TITRE" --msgbox "La configuration a échoué :\n\n$*\n\nDétails : $LOG\nElle reprendra au prochain démarrage." 14 70 || true
   exit 1
 }
@@ -60,6 +61,7 @@ secret_double() {  # secret_double <libellé> <longueur min> -> stdout
 }
 
 mkdir -p "$ETAT"
+EXTINCTION=$(conf eteindre_apres)   # tests automatiques : s'éteindre à la fin, même en cas d'échec
 journal "Début (config.txt : $([ -f "$CONF" ] && echo présent || echo absent))"
 SB=$(od -An -t u1 -j4 -N1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | tr -d ' ' || true)
 journal "UEFI Secure Boot : ${SB:-inconnu} (1 = actif)"
@@ -145,8 +147,8 @@ fi
 
 if ! fait agrandissement; then
   journal "Agrandissement à la taille de la clé"
-  sgdisk -e "$DISQUE" >/dev/null 2>&1 || true
-  rc=0; growpart "$DISQUE" "$NUM" || rc=$?
+  sgdisk -e "$DISQUE" >&3 2>&1 || true
+  rc=0; growpart "$DISQUE" "$NUM" >&3 2>&1 || rc=$?
   [ "$rc" -le 1 ] || echec "growpart (code $rc)"
   partx -u "$DISQUE" || true
   cryptsetup resize --key-file "$CLE_TMP" "$CRYPT"
@@ -173,7 +175,6 @@ journal "Initramfs (clavier, chiffrement)"
 update-initramfs -u -k all
 
 rm -f "$ETAT/a-configurer" "$ETAT"/fait-*
-EXTINCTION=$(conf eteindre_apres)   # tests automatiques
 rm -f "$CONF"
 journal "TERMINÉ $(lsblk -bno SIZE "/dev/$VG/root" | head -1) octets"
 sync
