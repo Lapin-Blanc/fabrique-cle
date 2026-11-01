@@ -37,6 +37,10 @@ done
 journal() { printf '\n=== %s ===\n' "$*"; }
 
 MNT=$(mktemp -d)
+# Cache APT HORS de l'image : les .deb téléchargés (déjà compressés) laisseraient, une fois effacés,
+# ~1,5 Gio de blocs libres incompressibles que fstrim ne rend pas tous au fichier image
+mkdir -p "$(dirname "$SORTIE")"
+CACHE=$(mktemp -d -p "$(dirname "$SORTIE")" cache-apt.XXXXXX)
 LOOP=
 # Processus lancés dans le chroot par les scripts des paquets (ils bloqueraient le démontage)
 tuer_chroot() {
@@ -67,6 +71,7 @@ nettoyer() {
   cryptsetup close "$CRYPT" 2>/dev/null
   [ -n "$LOOP" ] && losetup -d "$LOOP"
   rmdir "$MNT" 2>/dev/null
+  rm -rf "$CACHE"
 }
 trap nettoyer EXIT
 
@@ -114,6 +119,8 @@ rmdir "$MNT/lost+found"
 # ---------------------------------------------------------------------------
 journal "Système de base (mmdebstrap)"
 mmdebstrap --variant=important --components="$COMPOSANTS" \
+  --setup-hook="mkdir -p \"\$1/var/cache/apt/archives\" && mount --bind '$CACHE' \"\$1/var/cache/apt/archives\"" \
+  --customize-hook='umount "$1/var/cache/apt/archives"' \
   --include=locales,console-setup,keyboard-configuration,ca-certificates \
   "$SUITE" "$MNT" "$MIROIR"
 
@@ -221,6 +228,8 @@ EOF
 # ---------------------------------------------------------------------------
 journal "Paquets : noyau, chiffrement, GRUB, Plasma minimal, firmwares"
 chroot "$MNT" locale-gen
+mkdir -p "$CACHE/partial"
+mount --bind "$CACHE" "$MNT/var/cache/apt/archives"
 chroot "$MNT" apt-get update -qq
 chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold \
   linux-image-amd64 cryptsetup cryptsetup-initramfs lvm2 \
@@ -267,6 +276,7 @@ chroot "$MNT" update-grub
 # ---------------------------------------------------------------------------
 journal "Nettoyage (identité unique par clé)"
 chroot "$MNT" apt-get clean
+umount "$MNT/var/cache/apt/archives"
 rm -f "$MNT/usr/sbin/policy-rc.d"
 : > "$MNT/etc/resolv.conf"
 : > "$MNT/etc/machine-id"
@@ -287,9 +297,11 @@ cryptsetup status "$CRYPT" | grep -E 'cipher|keysize'
 fstrim -v "$MNT/boot/efi" || true
 fstrim -v "$MNT/boot" || true
 fstrim -v "$MNT" || true
+sync
 
 journal "Démontage"
 demonter
 cryptsetup status "$CRYPT" >/dev/null 2>&1 && { echo "ERREUR : volume encore ouvert"; exit 1; }
 
+echo "Blocs alloués dans le fichier image : $(du -m "$SORTIE" | cut -f1) Mio"
 journal "Image prête : $SORTIE (clé temporaire de test : $CLE_TMP)"
