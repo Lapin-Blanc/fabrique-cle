@@ -44,8 +44,9 @@ les 5,8 Gio alloués. La CI échoue au-delà de 3 Go.
 
 Deuxième passe : le build suivant sur `main` donnait 2 143 Mo (deux morceaux) à cause de `fstrim`,
 variable. Corrigé par `e2fsck -E discard` au démontage ; allègement sans toucher aux firmwares (doc, man,
-graisses supplémentaires des polices Noto) : **1 893 Mo** (run 41304716205), puis `zstd --long=27`
-(≈ −5 %). Marge d'environ 300 Mo sous le seuil de découpage. Piste suivante si besoin : traductions
+graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `zstd --long=27` :
+**1 796 Mo** (run 41305755188 ; 5 185 Mio alloués, identiques d'un build à l'autre). Marge d'environ
+300 Mo sous le seuil de découpage. Piste suivante si besoin : traductions
 (`/usr/share/locale`, 512 Mio, 214 langues) limitées aux langues proposées — à décider.
 
 ## Prochaines étapes
