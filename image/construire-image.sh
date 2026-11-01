@@ -25,6 +25,9 @@ CLE_CIBLE=/etc/cryptsetup-keys.d/$CRYPT.key
 VERSION=${VERSION:-dev}
 
 [ "$(id -u)" -eq 0 ] || { echo "Lancer avec sudo."; exit 1; }
+# Espace de montage privé : nos montages ne se propagent pas aux services de l'hôte
+# (qui les garderaient ouverts) et disparaissent avec le script
+[ -n "${FC_PRIVE:-}" ] || exec env FC_PRIVE=1 unshare --mount --propagation private "$0" "$@"
 for o in mmdebstrap sgdisk cryptsetup pvcreate mkfs.vfat mkfs.ext4 partx; do
   command -v "$o" >/dev/null || { echo "Outil manquant : $o"; exit 1; }
 done

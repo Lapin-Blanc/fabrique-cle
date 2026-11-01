@@ -20,6 +20,9 @@ VG=fabcle
 CRYPT=fabcle_test
 
 [ "$(id -u)" -eq 0 ] || { echo "Lancer avec sudo."; exit 1; }
+# Espace de montage privé : nos montages ne se propagent pas aux services de l'hôte
+# (qui les garderaient ouverts) et disparaissent avec le script
+[ -n "${FC_PRIVE:-}" ] || exec env FC_PRIVE=1 unshare --mount --propagation private "$0" "$@"
 vgs "$VG" >/dev/null 2>&1 && { echo "ABANDON : le groupe de volumes $VG est déjà actif sur cet hôte"; exit 1; }
 journal() { printf '\n=== %s ===\n' "$*"; }
 
