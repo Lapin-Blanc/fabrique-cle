@@ -77,7 +77,11 @@ impl Source {
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("zst"));
         let lecteur: Box<dyn Read + Send> = if compresse {
-            Box::new(zstd::Decoder::new(compteur).map_err(err("décompression"))?)
+            let mut d = zstd::Decoder::new(compteur).map_err(err("décompression"))?;
+            // L'image est compressée avec `zstd --long=27` (fenêtre de 128 Mio) : accepter
+            // jusqu'à 2 Gio plutôt que de dépendre de la limite par défaut de libzstd.
+            d.window_log_max(31).map_err(err("décompression"))?;
+            Box::new(d)
         } else {
             Box::new(io::BufReader::with_capacity(1 << 20, compteur))
         };
@@ -319,7 +323,12 @@ mod tests {
         std::fs::create_dir_all(&dossier).unwrap();
         let img = image_test();
         let zst = dossier.join("t.img.zst");
-        std::fs::write(&zst, zstd::encode_all(&img[..], 3).unwrap()).unwrap();
+        // Comme la CI : mode « long » (fenêtre de 2^27 octets).
+        let mut enc = zstd::Encoder::new(Vec::new(), 3).unwrap();
+        enc.long_distance_matching(true).unwrap();
+        enc.window_log(27).unwrap();
+        enc.write_all(&img).unwrap();
+        std::fs::write(&zst, enc.finish().unwrap()).unwrap();
         let bmap = bmap_de(&img, &[(0, 0), (5, 6), (15, 15)]);
 
         // Cible plus grande que l'image et remplie de « vieilles données ».

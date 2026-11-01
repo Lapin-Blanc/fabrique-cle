@@ -30,6 +30,25 @@
   déverrouillage avec une phrase de test dont les lettres diffèrent entre AZERTY et QWERTY.
 - Une image publiée a une clé maîtresse publique → `cryptsetup reencrypt` obligatoire sur chaque clé.
   Le faire **avant** l'agrandissement (≈ 1 min au lieu de dizaines).
+- **Un volume chiffré dans l'image la rend incompressible** (7,5 Go compressés pour 5,2 Go de système,
+  et `fstrim` à travers dm-crypt ne libère pas tout). Solution : image en LUKS2 **`cipher_null`**
+  (contenu en clair), chiffrée en AES-XTS au premier démarrage par le même `reencrypt` en ligne, en
+  précisant `--cipher` (par défaut, `reencrypt` garde le chiffrement actuel, donc `cipher_null` !).
+  Écarté : `reencrypt --encrypt --reduce-device-size` (décalage des données, à faire hors ligne dans
+  l'initramfs : bien plus complexe).
+- **`.deb` téléchargés dans l'image = ~1,4 Gio de blocs libres incompressibles** : après `apt-get clean`,
+  `fstrim` (à travers LVM et dm-crypt) n'a rendu au fichier que 1,7 Gio sur ~3,1 Gio libres. Cache APT
+  monté depuis l'hôte pendant la construction : 3 Gio rendus, 7 168 → 5 833 Mio alloués, 3,47 → 2,06 Go
+  compressés. Le script affiche « Blocs alloués dans le fichier image » : à surveiller.
+- **`fstrim` sur système monté : résultat variable** (2,8 à 3 Gio rendus selon les builds, ±90 Mo
+  compressés). `e2fsck -f -E discard` après démontage est exhaustif et reproductible.
+- Ce qui pèse dans l'image (mesuré en montant l'ext4 de l'image `cipher_null` via un loop décalé, sans
+  device-mapper) : bibliothèques 1,5 Gio, **polices 791 Mio** (dont ~600 Mio de graisses « extra »
+  Noto tirées par les recommandations de `plasma-desktop`), firmwares 552 Mio, traductions 512 Mio,
+  Firefox 295 Mio. Contenu largement déjà compressé (modules `.ko.xz`, firmwares `.zst`) : ratio ~2,8×.
+- zstd sur l'image (5,8 Gio) : `-12` 72 s ; `-12 --long=27` −5 % en 77 s ; `-17 --long=27` −8,7 % mais 451 s.
+- Avec `set -o pipefail`, éviter `cryptsetup luksDump | grep -q` (SIGPIPE possible) : lire l'en-tête
+  dans une variable.
 - `cryptsetup resize` après suppression de la clé temporaire peut demander un secret : agrandir **avant**
   de retirer la clé temporaire.
 - Dans un chroot, le hook cryptsetup ne peut pas deviner la racine : option `initramfs` dans crypttab.
