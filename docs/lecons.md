@@ -32,6 +32,9 @@
   Correctifs : service `After=plymouth-quit-wait.service systemd-user-sessions.service`,
   `plymouth quit`, puis dans le script `dmesg -n 1`, `kill -s RTMIN+21 1` (systemd n'affiche plus
   l'état), `chvt 1`, `clear`.
+- **Cause principale : `StandardError=journal`.** L'idiome `x=$(whiptail … 3>&1 1>&2 2>&3)` envoie
+  l'interface de whiptail sur la sortie d'erreur : elle était écrite dans le journal, jamais à l'écran.
+  Le service doit avoir `StandardError=tty`. (Révélé par la capture du test : écran propre, sans fenêtre.)
 - Le test CI passait car il fournissait la phrase dans `config.txt` (aucune question affichée). Il la
   tape désormais au clavier virtuel (`sendkey`), seulement quand la capture d'écran est majoritairement
   bleue (fond whiptail) : une question invisible fait échouer le test.

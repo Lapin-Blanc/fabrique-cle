@@ -13,7 +13,8 @@ ExecStartPre=-/usr/bin/plymouth quit
 ExecStart=/usr/local/sbin/fabrique-cle-premier-demarrage
 StandardInput=tty
 StandardOutput=tty
-StandardError=journal
+# whiptail dessine son interface sur la sortie d'erreur (idiome 3>&1 1>&2 2>&3) : elle doit aller à l'écran.
+StandardError=tty
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes

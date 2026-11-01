@@ -18,7 +18,7 @@ EN_PLUS=${EN_PLUS:-6G}          # la « clé » de test est plus grande que l'im
 DELAI=${DELAI:-1800}             # secondes avant de déclarer l'échec
 # Phrase tapée au clavier : uniquement des lettres placées au même endroit en AZERTY et en QWERTY
 # (le clavier belge est actif quand la question est posée).
-PHRASE=$(tr -dc 'bcdefghijklnoprstuvxy' </dev/urandom | head -c 16 || true)
+PHRASE=$(head -c 4096 /dev/urandom | LC_ALL=C tr -dc 'bcdefghijklnoprstuvxy' | head -c 16)
 ATTENTE_QUESTION=${ATTENTE_QUESTION:-900}   # secondes pour voir apparaître la question
 VG=fabcle
 CRYPT=fabcle_test
