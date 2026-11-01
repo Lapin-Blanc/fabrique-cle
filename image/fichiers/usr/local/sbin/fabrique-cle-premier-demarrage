@@ -134,7 +134,7 @@ fi
 
 # Partition chiffrée et disque qui la porte
 PART=$(cryptsetup status "$CRYPT" | awk '$1 == "device:" {print $2}')
-DISQUE=/dev/$(lsblk -no PKNAME "$PART")
+DISQUE=/dev/$(lsblk -dno PKNAME "$PART")
 NUM=$(cat "/sys/class/block/$(basename "$PART")/partition")
 journal "Volume : $PART (disque $DISQUE, partition $NUM)"
 
