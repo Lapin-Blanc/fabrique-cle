@@ -42,12 +42,15 @@ temporaire ni de rechiffrement. À prototyper et à couvrir par `tester-image.sh
 - [ ] Options de logiciels supplémentaires (F8) : installées au 1er démarrage si réseau, ou variantes d'image.
 
 ### Application Rust (`app/`)
-- [ ] Squelette `eframe`/`egui`, fenêtre style Rufus (maquette dans `architecture.md` / discussion)
-- [ ] Énumération des disques USB (Linux : udisks2/lsblk ; Windows : SetupAPI/WMI) avec garde-fous
-- [ ] Téléchargement + zstd en flux + bmap + SHA-256, barre de progression
-- [ ] Écriture brute (Linux udisks2/pkexec ; Windows PhysicalDrive + verrouillage des volumes)
-- [ ] Écriture de `config.txt` dans la FAT de p1 (crate `fatfs`) ; hachage `sha-crypt`
-- [ ] Workflow `app.yml` : builds Windows (`.exe`) et Linux (AppImage), attachés à la release
+- [x] Fenêtre `eframe`/`egui` style Rufus (clé, image, personnalisation, état, confirmation)
+- [x] Énumération des disques USB avec garde-fous (Linux : sysfs ; Windows : IOCTL sur PhysicalDrive)
+- [x] Téléchargement (cache, morceaux, SHA-256) + zstd en flux + bmap + vérification par relecture
+- [x] Écriture brute (Linux : assistant pkexec ; Windows : PhysicalDrive + verrouillage des volumes)
+- [x] Écriture de `config.txt` dans la FAT de p1 (crate `fatfs`) ; hachage `sha-crypt` (compatible glibc)
+- [x] Workflow `app.yml` : builds Windows (`.exe`) et Linux (AppImage), attachés à la release
+- [ ] **Essai sur vraie clé** : Linux (Zorin, pkexec) puis Windows 10/11 (verrouillage des volumes, UAC)
+- [ ] Essai bout en bout : clé écrite par l'application → premier démarrage qui lit `config.txt`
+- [ ] Icône de fenêtre et d'exécutable Windows ; reprise d'un téléchargement interrompu
 - [ ] Signature de code Windows (SmartScreen) : à évaluer (payant)
 
 ## Limites connues de l'environnement cloud

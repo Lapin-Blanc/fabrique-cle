@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Fabrique-Clé
+Comment=Fabriquer une clé USB Debian + KDE Plasma personnalisée
+Exec=fabrique-cle
+Icon=fabrique-cle
+Categories=System;Utility;
+Terminal=false
