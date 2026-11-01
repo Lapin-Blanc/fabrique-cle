@@ -1,0 +1,11 @@
+# Rust
+/app/target/
+# Images et artefacts de construction
+*.img
+*.img.zst
+*.qcow2
+*.fd
+/image/out/
+/image/work/
+# Secrets éventuels
+*.env
