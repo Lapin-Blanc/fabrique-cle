@@ -176,8 +176,8 @@ rm -f "$MNT/etc/apt/sources.list.d/debian.sources"
 
 cat > "$MNT/etc/fstab" <<EOF
 # <système de fichiers>                 <point de montage> <type> <options>                 <dump> <pass>
-/dev/mapper/$VG-root                    /                  ext4   errors=remount-ro         0      1
-UUID=$UUID_BOOT /boot              ext4   defaults                  0      2
+/dev/mapper/$VG-root                    /                  ext4   errors=remount-ro,noatime,commit=30 0 1
+UUID=$UUID_BOOT /boot              ext4   defaults,noatime          0      2
 UUID=$UUID_ESP                          /boot/efi          vfat   umask=0077                0      1
 EOF
 # Option initramfs : le hook ne peut pas deviner la racine depuis un chroot
@@ -253,6 +253,9 @@ journal "Paquets : noyau, chiffrement, GRUB, Plasma minimal, firmwares"
 chroot "$MNT" locale-gen
 mkdir -p "$CACHE/partial"
 mount --bind "$CACHE" "$MNT/var/cache/apt/archives"
+# Nos fichiers d'abord : dépôt Brave (et sa clé) nécessaires à l'installation, réglages pris en
+# compte par les paquets. Recopiés après l'installation, pour qu'aucun paquet ne les remplace.
+cp -r "$ICI/fichiers/." "$MNT/"
 chroot "$MNT" apt-get update -qq
 chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold \
   linux-image-amd64 cryptsetup cryptsetup-initramfs lvm2 \
@@ -261,7 +264,7 @@ chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Opt
   intel-microcode amd64-microcode \
   kde-plasma-desktop sddm plasma-nm network-manager \
   pipewire-audio wireplumber bluez bluedevil \
-  task-french firefox-esr firefox-esr-l10n-fr \
+  task-french brave-browser curl kdeplasma-addons plasma-wallpapers-addons konqueror- \
   firmware-linux firmware-misc-nonfree \
   firmware-intel-graphics firmware-intel-misc firmware-mediatek firmware-nvidia-graphics \
   firmware-amd-graphics firmware-iwlwifi firmware-realtek firmware-atheros \
@@ -270,7 +273,8 @@ chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Opt
 # (« paquet- » = ne pas installer.) Ces trois paquets, recommandés via fonts-noto, n'apportent que des
 # graisses et largeurs supplémentaires (~600 Mio) : toutes les écritures restent couvertes par
 # fonts-noto-core, fonts-noto-cjk, fonts-noto-ui-core et fonts-noto-mono.
-for p in kde-standard kde-full task-kde-desktop fonts-noto-extra fonts-noto-cjk-extra fonts-noto-ui-extra; do
+for p in kde-standard kde-full task-kde-desktop fonts-noto-extra fonts-noto-cjk-extra fonts-noto-ui-extra \
+         konqueror firefox-esr; do
   if chroot "$MNT" dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok'; then
     echo "ERREUR : $p installé"; exit 1
   fi
@@ -285,11 +289,25 @@ touch "$MNT/var/lib/fabrique-cle/a-configurer"
 mkdir -p "$MNT/boot/efi/fabrique-cle"
 cp "$ICI/config-exemple.txt" "$MNT/boot/efi/fabrique-cle/LISEZMOI.txt"
 
+# Brave, navigateur par défaut de Plasma (sinon Plasma choisit lui-même, souvent Konqueror)
+if chroot "$MNT" sh -c 'command -v kwriteconfig6' >/dev/null; then
+  chroot "$MNT" kwriteconfig6 --file /etc/xdg/kdeglobals --group General --key BrowserApplication brave-browser.desktop
+else
+  printf '[General]\nBrowserApplication=brave-browser.desktop\n' >> "$MNT/etc/xdg/kdeglobals"
+fi
+
 journal "Services, zram, TRIM"
 sed -i -E 's/^#?ALGO=.*/ALGO=zstd/; s/^#?PERCENT=.*/PERCENT=50/' "$MNT/etc/default/zramswap"
 chroot "$MNT" systemctl enable fabrique-cle-premier-demarrage.service zramswap.service \
   fstrim.timer sddm.service NetworkManager.service
 chroot "$MNT" systemctl set-default graphical.target
+# Inutiles ou coûteux sur une clé : attente du réseau au démarrage, modem 4G, SMART (rarement
+# disponible en USB), rafraîchissement des firmwares. Aucune mise à jour automatique : Discover
+# signale les mises à jour, l'utilisateur les lance quand cela l'arrange.
+for u in NetworkManager-wait-online.service ModemManager.service smartmontools.service fwupd-refresh.timer; do
+  chroot "$MNT" systemctl disable "$u" 2>/dev/null || true
+done
+chroot "$MNT" systemctl mask apt-daily.timer apt-daily-upgrade.timer
 
 # ---------------------------------------------------------------------------
 journal "Clavier console, initramfs, GRUB"
@@ -298,6 +316,7 @@ chroot "$MNT" update-initramfs -u -k all
 chroot "$MNT" grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian \
   --uefi-secure-boot --no-nvram --force-extra-removable
 rm -f "$MNT/boot/efi/EFI/BOOT/fbx64.efi" "$MNT/boot/efi/EFI/BOOT/BOOTX64.CSV"
+sed -i -E 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=1/' "$MNT/etc/default/grub"   # menu : Échap pour l'afficher
 chroot "$MNT" update-grub
 
 # ---------------------------------------------------------------------------

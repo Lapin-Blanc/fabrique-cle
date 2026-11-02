@@ -59,7 +59,10 @@ graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `
 - [ ] Test sans chiffrement (`chiffrer=non`).
 - [ ] Vérifier la taille de la clé minimale (16 Go) ; garder l'image compressée sous 2 000 Mio.
 - [ ] Essai sur vrai matériel (portable HP, PC de l'école) : Wi-Fi, son, veille, `lsblk --discard`.
-- [ ] Mises à jour : automatiques (unattended-upgrades) ? à décider.
+- [x] Mises à jour : aucune automatique ; Discover les signale (décision du 2026-11-02)
+- [x] Brave seul navigateur ; fond « image du jour » ; réglages pour clé lente (voir `lecons.md`)
+- [ ] `initrd` allégé (sans pilotes graphiques ni leurs firmwares) : démarrage plus rapide sur clé lente
+- [ ] Vérifier sur une vraie session Plasma : fond « image du jour » appliqué, Brave par défaut, BFQ actif
 - [ ] Options de logiciels supplémentaires (F8) : installées au 1er démarrage si réseau, ou variantes d'image.
 
 ### Application Rust (`app/`)

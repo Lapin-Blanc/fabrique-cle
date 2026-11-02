@@ -1,0 +1,3 @@
+# Fabrique-Clé — disques USB : ordonnanceur BFQ (bureau réactif pendant les écritures) et
+# lecture anticipée de 512 Ko. Numéro 61 : après 60-persistent-storage, qui définit ID_BUS.
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_BUS}=="usb", ATTR{queue/scheduler}="bfq", ATTR{queue/read_ahead_kb}="512"

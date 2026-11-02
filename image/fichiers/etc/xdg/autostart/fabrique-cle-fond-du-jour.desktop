@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Fabrique-Clé : fond « image du jour »
+Exec=/usr/local/bin/fabrique-cle-fond-du-jour
+OnlyShowIn=KDE;
+NoDisplay=true
+X-KDE-autostart-phase=2

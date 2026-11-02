@@ -43,6 +43,17 @@
   tape désormais au clavier virtuel (`sendkey`), seulement quand la capture d'écran est majoritairement
   bleue (fond whiptail) : une question invisible fait échouer le test.
 
+## Clé lente (USB sans UAS) — essai du 2026-11-01 (SanDisk 3.2, `usb-storage`, 13 Mo/s en écriture)
+
+- Le frein est l'écriture : une requête à la fois, 0,4 Mo/s en petits blocs. Linux accumulait ~1,4 Go
+  à écrire et le bureau se figeait. Écriture différée bornée (`vm.dirty_*_bytes`) : plus de gel.
+- Règle udev BFQ : numérotée **61**, sinon elle passe avant `60-persistent-storage` qui définit `ID_BUS`.
+- `~/.cache` en tmpfs suffit pour les caches de navigateur. **profile-sync-daemon écarté** : jusqu'à
+  1 h de profil perdue si la clé est arrachée, et il faut le maintenir par navigateur.
+- `commit=30` plutôt que 60 : compromis entre écritures et données perdues en cas d'arrachage.
+- Démarrage : 12 s dans GRUB à charger un `initrd` de 133 Mo depuis la clé lente (piste : en retirer
+  les pilotes graphiques et leurs firmwares).
+
 ## Chiffrement
 
 - Clavier : sans `KEYMAP=y` (+ `setupcon --save-only`), la phrase LUKS se tape en QWERTY. Validé par
