@@ -264,7 +264,7 @@ chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Opt
   intel-microcode amd64-microcode \
   kde-plasma-desktop sddm plasma-nm network-manager \
   pipewire-audio wireplumber bluez bluedevil \
-  task-french brave-browser curl plasma-wallpapers-addons konqueror- firefox-esr- chromium- \
+  task-french brave-browser curl plasma-wallpapers-addons konqueror- firefox-esr- chromium- plymouth- plymouth-label- \
   firmware-linux firmware-misc-nonfree \
   firmware-intel-graphics firmware-intel-misc firmware-mediatek firmware-nvidia-graphics \
   firmware-amd-graphics firmware-iwlwifi firmware-realtek firmware-atheros \
@@ -272,11 +272,13 @@ chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Opt
   fonts-noto-extra- fonts-noto-cjk-extra- fonts-noto-ui-extra-
 # (« paquet- » = ne pas installer.) Navigateurs : Brave seul ; webext-plasma-browser-integration
 # (recommandé par Plasma) recommande « firefox-esr | firefox | chromium » : les exclure tous deux.
+# plymouth (écran de démarrage, recommandé) : son hook copie tous les pilotes graphiques dans
+# l'initramfs (~170 Mo avec firmwares) ; l'image démarre en mode texte, sans « splash ».
 # Polices : ces trois paquets, recommandés via fonts-noto, n'apportent que des
 # graisses et largeurs supplémentaires (~600 Mio) : toutes les écritures restent couvertes par
 # fonts-noto-core, fonts-noto-cjk, fonts-noto-ui-core et fonts-noto-mono.
 for p in kde-standard kde-full task-kde-desktop fonts-noto-extra fonts-noto-cjk-extra fonts-noto-ui-extra \
-         konqueror firefox-esr chromium; do
+         konqueror firefox-esr chromium plymouth; do
   if chroot "$MNT" dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok'; then
     echo "ERREUR : $p installé"; exit 1
   fi
@@ -351,11 +353,6 @@ chroot "$MNT" sh -c '
   rm -rf "$d"'
 # Garde-fous de l'allègement (hook zz-fabrique-cle-allege) : ni pilotes graphiques ni réseau,
 # mais toujours de quoi ouvrir le volume (dm-crypt, USB, clavier), et une taille raisonnable.
-# DIAGNOSTIC (temporaire) : qui ajoute les pilotes graphiques ?
-echo "-- hooks :"; ls /dev/null "$MNT"/usr/share/initramfs-tools/hooks "$MNT"/etc/initramfs-tools/hooks 2>&1 | tr '\n' ' '; echo
-echo "-- mentions drm/gpu :"; grep -rlE 'drivers/gpu|drm' "$MNT"/usr/share/initramfs-tools "$MNT"/etc/initramfs-tools "$MNT"/usr/sbin/mkinitramfs 2>/dev/null
-grep -nE 'run_scripts|depmod|auto_add_modules|hooks' "$MNT"/usr/sbin/mkinitramfs | head -20
-grep -nE 'drivers/gpu|drm' "$MNT"/usr/share/initramfs-tools/hook-functions | head -20
 LISTE=$(chroot "$MNT" lsinitramfs "/$K")
 if grep -qE 'kernel/drivers/(gpu|net)/' <<<"$LISTE"; then echo "ERREUR : pilotes graphiques ou réseau dans l'initramfs"; exit 1; fi
 INTEGRES=$(cat "$MNT"/usr/lib/modules/"${K#boot/initrd.img-}"/modules.builtin 2>/dev/null || true)

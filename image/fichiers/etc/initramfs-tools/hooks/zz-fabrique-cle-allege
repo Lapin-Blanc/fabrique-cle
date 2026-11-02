@@ -6,6 +6,9 @@
 # au noyau) ; les pilotes complets se chargent ensuite depuis le système, comme d'habitude.
 # Tous les pilotes de stockage, USB et clavier restent (MODULES=most : clé nomade, matériel inconnu).
 # Nommé zz- : passe après les autres hooks ; depmod est exécuté ensuite par mkinitramfs.
+# Attention : les modules mis en file par les hooks (manual_add_modules) ne sont copiés qu'APRÈS
+# tous les hooks (apply_add_modules) : ce hook ne peut pas les retirer. C'est pourquoi plymouth,
+# dont le hook ajoute tout drivers/gpu/drm, est exclu de l'image (construire-image.sh).
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0 ;; esac
@@ -30,4 +33,3 @@ comm -23 "$t/retires" "$t/gardes" | while IFS= read -r n; do
 done
 find "$fw" -type d -empty -delete 2>/dev/null || true
 rm -rf "$t"
-echo "fabrique-cle-allege : drivers restants = $(ls "$mods/kernel/drivers" | tr '\n' ' ')" >&2   # DIAGNOSTIC
