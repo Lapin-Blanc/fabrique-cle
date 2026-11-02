@@ -23,6 +23,10 @@ compris) sans rien modifier sur ce PC. Lire dans l'ordre :
 - `app/` — application Rust egui (Windows + Linux) : `cargo test` dans `app/` ; modules décrits dans `architecture.md` § 4
 - `.github/workflows/image.yml` — construction + test à chaque push sur `image/**`, release sur étiquette `v*`
 - `.github/workflows/app.yml` — tests + `.exe` Windows + AppImage Linux à chaque push sur `app/**`, joints à la release sur `v*`
+- `.github/workflows/publier.yml` — **publier une version** : lancé à la demande (entrée `version`, ex. `v2026.11.2`),
+  après **approbation de l'enseignant** (environnement GitHub `release`) ; pose l'étiquette sur `main`, crée la
+  release en pré-version, appelle `image.yml` et `app.yml`. Claude Code le lance avec `actions_run_trigger`
+  (`run_workflow`, `ref: main`) — il ne peut pas pousser d'étiquette lui-même.
 
 ## Règles
 
@@ -36,7 +40,8 @@ compris) sans rien modifier sur ce PC. Lire dans l'ordre :
 
 ## Construire / tester
 
-- En CI : pousser sur `main` (chemins `image/**`) ; suivre avec `gh run watch`. Diagnostic en artefact (`ecran.ppm`, journal).
+- En CI : pousser sur `main` (chemins `image/**`), ou lancer `image.yml` à la demande sur une branche ;
+  suivre avec `gh run watch`. Diagnostic en artefact (`ecran.ppm`, journal).
 - En local (Linux, root) : `sudo image/construire-image.sh` puis `sudo image/tester-image.sh`
   (paquets : mmdebstrap gdisk cryptsetup lvm2 dosfstools qemu-system-x86 ovmf zstd bmap-tools cloud-guest-utils socat).
 - Un build complet + test prend ~9 min sur un runner GitHub.
