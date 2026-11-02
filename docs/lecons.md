@@ -138,6 +138,12 @@
   flux si la sonde ou tous les morceaux échouent (proxy, pare-feu). Le proxy des sessions Claude
   Code dans le nuage casse les réponses de GitHub pour `ureq` (« chunk expected crlf ») : à tester
   sur un vrai PC (`cargo test morceau_reel -- --ignored`).
+- **Cache de téléchargement dans un `~/.cache` en RAM** (essai du 2026-11-02, application lancée
+  depuis une clé Fabrique-Clé) : `~/.cache` y est un tmpfs de 1 Gio, l'image en fait 1,5 →
+  « No space left on device » à mi-parcours, et « relancez » ne pouvait rien y faire. Le dossier
+  du cache est maintenant choisi d'après l'espace libre, mesuré **avant** de télécharger :
+  `~/.cache`, puis `~/.local/share`, `/var/tmp`, le dossier temporaire ; un partiel abandonné
+  ailleurs est retiré (il occupait la RAM).
 
 ## Essais de distributions (historique)
 
