@@ -381,12 +381,42 @@ fn latence(mes: &Mesures) -> Fiche {
 }
 
 fn trim(m: &Materiel) -> Fiche {
-    let (valeur, appr) = match m.trim {
-        Some(true) => ("pris en charge", Appreciation::Bon),
-        Some(false) => ("non pris en charge", Appreciation::Faible),
-        None => ("inconnu", Appreciation::Neutre),
-    };
-    fiche("trim", "TRIM", valeur, Certitude::Lu, appr, "")
+    match m.trim {
+        Some(true) => fiche(
+            "trim",
+            "TRIM",
+            "pris en charge",
+            Certitude::Lu,
+            Appreciation::Bon,
+            "",
+        ),
+        Some(false) => fiche(
+            "trim",
+            "TRIM",
+            "non pris en charge",
+            Certitude::Lu,
+            Appreciation::Faible,
+            "",
+        ),
+        // Windows ne répond pas toujours (clés USBSTOR) ; en BOT, TRIM est de toute façon
+        // impossible : le protocole ne transmet pas cette commande.
+        None if m.protocole() == Some(Protocole::Bot) => fiche(
+            "trim",
+            "TRIM",
+            "non pris en charge",
+            Certitude::Deduit,
+            Appreciation::Faible,
+            "Le protocole BOT ne transmet pas la commande TRIM.",
+        ),
+        None => fiche(
+            "trim",
+            "TRIM",
+            "inconnu",
+            Certitude::Lu,
+            Appreciation::Neutre,
+            "",
+        ),
+    }
 }
 
 fn liaison(m: &Materiel, mes: Option<&Mesures>) -> Fiche {
