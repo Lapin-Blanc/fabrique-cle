@@ -351,6 +351,11 @@ chroot "$MNT" sh -c '
   rm -rf "$d"'
 # Garde-fous de l'allègement (hook zz-fabrique-cle-allege) : ni pilotes graphiques ni réseau,
 # mais toujours de quoi ouvrir le volume (dm-crypt, USB, clavier), et une taille raisonnable.
+# DIAGNOSTIC (temporaire) : qui ajoute les pilotes graphiques ?
+echo "-- hooks :"; ls /dev/null "$MNT"/usr/share/initramfs-tools/hooks "$MNT"/etc/initramfs-tools/hooks 2>&1 | tr '\n' ' '; echo
+echo "-- mentions drm/gpu :"; grep -rlE 'drivers/gpu|drm' "$MNT"/usr/share/initramfs-tools "$MNT"/etc/initramfs-tools "$MNT"/usr/sbin/mkinitramfs 2>/dev/null
+grep -nE 'run_scripts|depmod|auto_add_modules|hooks' "$MNT"/usr/sbin/mkinitramfs | head -20
+grep -nE 'drivers/gpu|drm' "$MNT"/usr/share/initramfs-tools/hook-functions | head -20
 LISTE=$(chroot "$MNT" lsinitramfs "/$K")
 if grep -qE 'kernel/drivers/(gpu|net)/' <<<"$LISTE"; then echo "ERREUR : pilotes graphiques ou réseau dans l'initramfs"; exit 1; fi
 INTEGRES=$(cat "$MNT"/usr/lib/modules/"${K#boot/initrd.img-}"/modules.builtin 2>/dev/null || true)

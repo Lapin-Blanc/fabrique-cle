@@ -30,3 +30,4 @@ comm -23 "$t/retires" "$t/gardes" | while IFS= read -r n; do
 done
 find "$fw" -type d -empty -delete 2>/dev/null || true
 rm -rf "$t"
+echo "fabrique-cle-allege : drivers restants = $(ls "$mods/kernel/drivers" | tr '\n' ' ')" >&2   # DIAGNOSTIC
