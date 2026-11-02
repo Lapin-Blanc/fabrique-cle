@@ -85,6 +85,10 @@ graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `
 - [x] Diagnostic, étape 2 : analyse complète **destructive** (confirmation par n° de série) : capacité
       réelle (marqueurs), écriture aléatoire 4 Ko, écritures synchronisées, longue écriture et courbe
       de débit (cache SLC), lecture sur données écrites ; catégorie A–D mesurée — 2026-11-02
+- [x] Diagnostic : mesure d'écriture sur l'espace libre (fichier d'essai, sans effacer) ; clé système en
+      cours proposée au diagnostic (Linux) — 2026-11-02
+- [x] Essais réels sous Windows : SSD WD SN350 en boîtier RTL9210 (lectures irrégulières → fiche
+      « Régularité »), SanDisk 3.2 Gen 1 (BOT, lectures régulières ~2 000/s, catégorie A/B en lecture)
 - [ ] Vérifier le repli `run0` (application lancée depuis une clé Fabrique-Clé, sans pkexec)
 - [ ] Diagnostic, étape 3 : rapport exporté (texte/Markdown) pour comparer des modèles
 - [ ] Icône de l'exécutable Windows (ressource .ico)

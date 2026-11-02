@@ -235,8 +235,9 @@ fn courbe(ui: &mut egui::Ui, a: &Analyse) {
 }
 
 impl Appli {
-    /// Lance l'analyse complète de la clé choisie (après confirmation).
-    fn demarrer_analyse(&mut self, ctx: &egui::Context) {
+    /// Lance l'analyse complète (`fichier` faux, efface la clé) ou la mesure dans un fichier
+    /// d'essai (`fichier` vrai, n'efface rien), après confirmation.
+    fn demarrer_analyse(&mut self, ctx: &egui::Context, fichier: bool) {
         let Some(disque) = self.disque.clone() else {
             return;
         };
@@ -251,7 +252,11 @@ impl Appli {
         };
         let d = disque.clone();
         std::thread::spawn(move || {
-            let r = analyse::analyser_cle(&d, reglages, &suivi);
+            let r = if fichier {
+                analyse::analyser_espace_libre(&d, reglages, &suivi)
+            } else {
+                analyse::analyser_cle(&d, reglages, &suivi)
+            };
             let _ = tx.send(Evenement::Analyse(r.map(Box::new)));
             suivi.ctx.request_repaint();
         });
@@ -260,7 +265,11 @@ impl Appli {
             nature: Nature::Analyse(disque),
             rx,
             annuler,
-            etape: "Démarrage de l'analyse complète".into(),
+            etape: if fichier {
+                "Démarrage de la mesure d'écriture".into()
+            } else {
+                "Démarrage de l'analyse complète".into()
+            },
             fraction: 0.0,
             detail: String::new(),
         });
@@ -328,7 +337,7 @@ impl Appli {
         match choix {
             Some(true) => {
                 self.diag.confirmer_analyse = false;
-                self.demarrer_analyse(ctx);
+                self.demarrer_analyse(ctx, false);
             }
             Some(false) => self.diag.confirmer_analyse = false,
             None => {}
@@ -344,26 +353,18 @@ impl Appli {
             "analyse",
         );
         ui.add_space(4.0);
+        if self.disque_systeme() {
+            ui.label(
+                egui::RichText::new(
+                    "Impossible sur cette clé : elle porte le système en cours d'exécution. \
+                     Utilisez la mesure sur l'espace libre (carte 4).",
+                )
+                .color(ui.visuals().warn_fg_color),
+            );
+            return;
+        }
         ui.add_enabled_ui(!occupe, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Longue écriture :");
-                let actuel = DUREES_LONGUES
-                    .iter()
-                    .find(|x| x.0 == self.diag.reglages.duree_longue_s)
-                    .map_or("", |x| x.1);
-                egui::ComboBox::from_id_salt("duree-longue")
-                    .selected_text(actuel)
-                    .show_ui(ui, |ui| {
-                        for (s, nom) in DUREES_LONGUES {
-                            ui.selectable_value(&mut self.diag.reglages.duree_longue_s, s, nom);
-                        }
-                    })
-                    .response
-                    .on_hover_text(
-                        "Plus elle est longue, plus on a de chances de remplir le cache SLC et de \
-                         voir le débit réel de la mémoire.",
-                    );
-            });
+            self.choix_duree(ui, "duree-longue-analyse");
             ui.add_space(4.0);
             let rouge = ui.visuals().error_fg_color;
             let b = egui::Button::new(
@@ -377,9 +378,182 @@ impl Appli {
                 self.diag.confirmer_analyse = true;
             }
         });
-        if let Some(a) = an {
+        if let Some(a) = an.filter(|a| a.fichier.is_none()) {
             ui.add_space(10.0);
             Self::ui_analyse(ui, a);
+        }
+    }
+
+    /// Durée de la longue écriture (réglage commun aux deux mesures d'écriture).
+    fn choix_duree(&mut self, ui: &mut egui::Ui, id: &str) {
+        ui.horizontal(|ui| {
+            ui.label("Longue écriture :");
+            let actuel = DUREES_LONGUES
+                .iter()
+                .find(|x| x.0 == self.diag.reglages.duree_longue_s)
+                .map_or("", |x| x.1);
+            egui::ComboBox::from_id_salt(id)
+                .selected_text(actuel)
+                .show_ui(ui, |ui| {
+                    for (s, nom) in DUREES_LONGUES {
+                        ui.selectable_value(&mut self.diag.reglages.duree_longue_s, s, nom);
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Plus elle est longue, plus on a de chances de remplir le cache SLC et de \
+                     voir le débit réel de la mémoire.",
+                );
+        });
+    }
+
+    /// Volume de la clé le plus spacieux, ouvert en écriture (relu toutes les 3 secondes).
+    fn emplacement(&mut self, d: &disques::Disque, occupe: bool) -> Option<disques::Emplacement> {
+        let perime = match &self.diag.emplacements {
+            Some((x, _, t)) => x != d || (!occupe && t.elapsed().as_secs() >= 3),
+            None => true,
+        };
+        if perime {
+            self.diag.emplacements = Some((d.clone(), disques::emplacements(d), Instant::now()));
+        }
+        self.diag
+            .emplacements
+            .as_ref()
+            .and_then(|(_, e, _)| e.iter().max_by_key(|e| e.libre).cloned())
+    }
+
+    /// Carte de la mesure d'écriture dans un fichier d'essai (n'efface rien).
+    fn ui_carte_espace_libre(
+        &mut self,
+        ui: &mut egui::Ui,
+        occupe: bool,
+        d: &disques::Disque,
+        an: Option<&Analyse>,
+    ) {
+        explication(
+            ui,
+            "Ce que fait cette mesure",
+            "espace-libre-presentation",
+            "espace_libre",
+        );
+        ui.add_space(4.0);
+        let e = self.emplacement(d, occupe);
+        let pret = match &e {
+            None => {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(
+                            "Aucun volume de cette clé n'est ouvert en écriture : ouvrez-la dans \
+                             l'explorateur de fichiers (elle doit contenir un volume lisible par \
+                             ce PC).",
+                        )
+                        .weak(),
+                    )
+                    .wrap(),
+                );
+                false
+            }
+            Some(e) => {
+                let u = analyse::utilisable(e.libre);
+                ui.label(format!(
+                    "Volume : {} — {} libres, dont {} utilisables pour la mesure.",
+                    e.dossier.display(),
+                    crate::suivi::taille_lisible(e.libre),
+                    crate::suivi::taille_lisible(u)
+                ));
+                if u < analyse::LIBRE_MIN / 2 {
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "Pas assez d'espace libre pour mesurer l'écriture.",
+                    );
+                    false
+                } else {
+                    true
+                }
+            }
+        };
+        ui.add_enabled_ui(!occupe && pret, |ui| {
+            self.choix_duree(ui, "duree-longue-fichier");
+            ui.add_space(4.0);
+            let b = egui::Button::new(
+                egui::RichText::new("Mesurer l'écriture (fichier temporaire)…")
+                    .family(theme::gras())
+                    .color(egui::Color32::WHITE),
+            )
+            .fill(theme::accent(ui))
+            .min_size(egui::vec2(260.0, 32.0));
+            if ui.add(b).clicked() {
+                self.diag.confirmer_fichier = true;
+            }
+        });
+        if let Some(a) = an.filter(|a| a.fichier.is_some()) {
+            ui.add_space(10.0);
+            Self::ui_analyse(ui, a);
+        }
+    }
+
+    /// Fenêtre de confirmation de la mesure dans un fichier d'essai.
+    pub(super) fn ui_confirmation_fichier(&mut self, ctx: &egui::Context) {
+        let Some(d) = self.disque.clone() else {
+            self.diag.confirmer_fichier = false;
+            return;
+        };
+        let Some(e) = self.emplacement(&d, false) else {
+            self.diag.confirmer_fichier = false;
+            return;
+        };
+        let mut choix = None;
+        egui::Modal::new(egui::Id::unique("confirmation-fichier")).show(ctx, |ui| {
+            ui.set_max_width(460.0);
+            ui.heading("Mesurer l'écriture ?");
+            ui.add_space(8.0);
+            ui.add(
+                egui::Label::new(format!(
+                    "Un fichier temporaire, de {} au plus, sera écrit dans {} puis supprimé. \
+                     Aucun fichier existant n'est modifié ; au moins 10 % de l'espace libre est \
+                     laissé.",
+                    crate::suivi::taille_lisible(analyse::utilisable(e.libre)),
+                    e.dossier.display()
+                ))
+                .wrap(),
+            );
+            ui.add_space(6.0);
+            Self::encadre(ui, theme::accent(ui), &d.libelle());
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(
+                    "Pendant la mesure, la clé est très sollicitée : évitez de l'utiliser.",
+                )
+                .small()
+                .weak(),
+            );
+            ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                let b = egui::Button::new(
+                    egui::RichText::new("Mesurer")
+                        .family(theme::gras())
+                        .color(egui::Color32::WHITE),
+                )
+                .fill(theme::accent(ui))
+                .min_size(egui::vec2(150.0, 34.0));
+                if ui.add(b).clicked() {
+                    choix = Some(true);
+                }
+                if ui
+                    .add(egui::Button::new("Annuler").min_size(egui::vec2(100.0, 34.0)))
+                    .clicked()
+                {
+                    choix = Some(false);
+                }
+            });
+        });
+        match choix {
+            Some(true) => {
+                self.diag.confirmer_fichier = false;
+                self.demarrer_analyse(ctx, true);
+            }
+            Some(false) => self.diag.confirmer_fichier = false,
+            None => {}
         }
     }
 
@@ -399,19 +573,25 @@ impl Appli {
             .spacing([14.0, 5.0])
             .striped(true)
             .show(ui, |ui| {
-                ui.label(egui::RichText::new("Capacité réelle").weak());
-                if c.conforme() {
-                    ui.label(format!("conforme ({} marqueurs)", c.marqueurs));
+                if let Some(dossier) = &a.fichier {
+                    ui.label(egui::RichText::new("Fichier d'essai").weak());
+                    ui.label(format!("sur {dossier} (supprimé)"));
+                    ui.end_row();
                 } else {
-                    ui.colored_label(
-                        ui.visuals().error_fg_color,
-                        format!(
-                            "NON CONFORME : {} fiables",
-                            crate::suivi::taille_lisible(c.fiable)
-                        ),
-                    );
+                    ui.label(egui::RichText::new("Capacité réelle").weak());
+                    if c.conforme() {
+                        ui.label(format!("conforme ({} marqueurs)", c.marqueurs));
+                    } else {
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            format!(
+                                "NON CONFORME : {} fiables",
+                                crate::suivi::taille_lisible(c.fiable)
+                            ),
+                        );
+                    }
+                    ui.end_row();
                 }
-                ui.end_row();
                 ui.label(egui::RichText::new("Écriture aléatoire 4 Ko, une à la fois").weak());
                 ui.label(format!(
                     "{} écritures/s ({} Mo/s)",
@@ -489,6 +669,10 @@ impl Appli {
                 }
                 if ui.add(b).on_hover_text(aide).clicked() {
                     self.onglet = o;
+                    // La clé qui porte le système en cours n'est jamais proposée à la fabrication.
+                    if o == Onglet::Fabriquer && self.disque_systeme() {
+                        self.disque = None;
+                    }
                 }
             }
         });
@@ -573,11 +757,15 @@ impl Appli {
             }
         });
         ui.add_space(10.0);
-        Self::carte(ui, 4, "Analyse complète (efface la clé)", |ui| {
+        Self::carte(ui, 4, "Écriture sur l'espace libre (sans effacer)", |ui| {
+            self.ui_carte_espace_libre(ui, occupe, &d, an.as_ref());
+        });
+        ui.add_space(10.0);
+        Self::carte(ui, 5, "Analyse complète (efface la clé)", |ui| {
             self.ui_carte_analyse(ui, occupe, an.as_ref());
         });
         ui.add_space(10.0);
-        Self::carte(ui, 5, "Ce que cela signifie", |ui| {
+        Self::carte(ui, 6, "Ce que cela signifie", |ui| {
             let (estimation, appr) = interpretation::estimation(&m, mes.as_ref(), an.as_ref());
             Self::encadre(ui, couleur(ui, appr), &estimation);
             ui.add_space(8.0);

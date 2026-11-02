@@ -717,7 +717,11 @@ pub fn fiches(
         Some(a) => {
             f.push(ecriture_aleatoire(a));
             f.push(ecriture_synchro(a));
-            f.push(capacite(a, taille));
+            f.push(if a.fichier.is_some() {
+                non_mesure("capacite", "Capacité réelle")
+            } else {
+                capacite(a, taille)
+            });
         }
         None => {
             f.push(non_mesure("ecriture_aleatoire", "Écriture aléatoire 4 Ko"));
@@ -802,7 +806,7 @@ pub fn estimation(
     let appr;
     if let Some(a) = an {
         let w = ecriture_4k(a);
-        let (t, ap) = if !a.capacite.conforme() {
+        let (t, ap) = if a.fichier.is_none() && !a.capacite.conforme() {
             (
                 "Clé contrefaite ou défectueuse : sa capacité réelle ne correspond pas à \
                  l'annonce. À ne pas utiliser.",
@@ -836,7 +840,12 @@ pub fn estimation(
             )
         };
         texte += t;
-        texte += &format!(" (Écriture aléatoire 4 Ko mesurée : {} Mo/s.)", dec(w));
+        texte += &format!(" (Écriture aléatoire 4 Ko mesurée : {} Mo/s", dec(w));
+        texte += match &a.fichier {
+            Some(d) => format!(", dans un fichier d'essai sur {d}.)"),
+            None => ".)".into(),
+        }
+        .as_str();
         appr = ap;
     } else {
         let uas = m.protocole() == Some(Protocole::Uas);
@@ -900,6 +909,9 @@ pub fn resume(d: &Disque, m: &Materiel, mes: Option<&Mesures>, an: Option<&Analy
         s += "\nAttention : lectures passées par le cache du système, mesures peu fiables.\n";
     }
     if let Some(a) = an {
+        if let Some(d) = &a.fichier {
+            s += &format!("\nMesures d'écriture : fichier d'essai sur {d} (sans rien effacer).\n");
+        }
         if !a.directes {
             s += "\nAttention : écritures passées par le cache du système, mesures peu fiables.\n";
         }

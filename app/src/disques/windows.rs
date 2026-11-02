@@ -3,7 +3,7 @@
 //! d'écrire dans les secteurs d'un volume monté). L'application demande les droits administrateur
 //! (manifeste, voir `build.rs`).
 
-use super::{Disque, propre};
+use super::{Disque, Emplacement, propre};
 use crate::diagnostic::materiel::Materiel;
 use crate::ecriture::Cible;
 use std::fs::File;
@@ -23,9 +23,10 @@ use windows_sys::Win32::Devices::Usb::{
 };
 use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_FLAG_NO_BUFFERING, FILE_SHARE_READ, FILE_SHARE_WRITE, FindFirstVolumeW,
-    FindNextVolumeW, FindVolumeClose, FlushFileBuffers, IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
-    OPEN_EXISTING,
+    CREATE_NEW, CreateFileW, FILE_FLAG_DELETE_ON_CLOSE, FILE_FLAG_NO_BUFFERING, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FindFirstVolumeW, FindNextVolumeW, FindVolumeClose,
+    FlushFileBuffers, GetDiskFreeSpaceExW, GetVolumePathNamesForVolumeNameW,
+    IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::{
@@ -644,4 +645,106 @@ pub fn identifier(d: &Disque) -> Materiel {
         _ => None,
     };
     m
+}
+
+/// Volumes de la clé qui ont une lettre ou un point de montage (« E:\ »), avec leur espace libre.
+pub fn emplacements(d: &Disque) -> Vec<Emplacement> {
+    let Some(n) = d
+        .chemin
+        .strip_prefix("\\\\.\\PhysicalDrive")
+        .and_then(|s| s.parse::<u32>().ok())
+    else {
+        return Vec::new();
+    };
+    let mut res = Vec::new();
+    for v in volumes() {
+        let Some(h) = ouvrir_handle(v.trim_end_matches('\\'), 0)
+            .or_else(|| ouvrir_handle(v.trim_end_matches('\\'), GENERIC_READ))
+        else {
+            continue;
+        };
+        if !disques_du_volume(&h).contains(&n) {
+            continue;
+        }
+        // Chemins d'accès du volume : suite de chaînes terminées par un zéro.
+        let mut buf = [0u16; 1024];
+        let mut longueur = 0u32;
+        let w = large(&v);
+        // SAFETY : chaîne terminée par un zéro, tampon de la longueur indiquée.
+        let ok = unsafe {
+            GetVolumePathNamesForVolumeNameW(
+                w.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+                &mut longueur,
+            )
+        };
+        if ok == 0 {
+            continue;
+        }
+        let fin = buf.iter().position(|&c| c == 0).unwrap_or(0);
+        if fin == 0 {
+            continue; // volume sans lettre
+        }
+        let chemin = String::from_utf16_lossy(&buf[..fin]);
+        let mut libre = 0u64;
+        let wc = large(&chemin);
+        // SAFETY : chaîne terminée par un zéro ; les sorties facultatives sont nulles.
+        if unsafe { GetDiskFreeSpaceExW(wc.as_ptr(), &mut libre, null_mut(), null_mut()) } == 0 {
+            continue;
+        }
+        res.push(Emplacement {
+            dossier: std::path::PathBuf::from(chemin),
+            libre,
+        });
+    }
+    res
+}
+
+/// Crée un fichier d'essai dans `dossier` et l'ouvre `n` fois, sans cache système. Le fichier
+/// est marqué « effacer à la fermeture » : Windows le supprime à la fermeture du dernier
+/// descripteur, même si l'application s'arrête brutalement. Aucun autre fichier n'est touché.
+pub fn creer_fichier_essai(dossier: &std::path::Path, n: u32) -> Result<(Vec<File>, bool), String> {
+    let mut alea = [0u8; 8];
+    let _ = getrandom::fill(&mut alea);
+    let chemin = dossier.join(format!(
+        ".fabrique-cle-essai-{}-{}.tmp",
+        std::process::id(),
+        hex::encode(alea)
+    ));
+    let w = large(&chemin.to_string_lossy());
+    let partage = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    let mut fichiers = Vec::new();
+    for i in 0..n {
+        let (creation, drapeaux) = if i == 0 {
+            (
+                CREATE_NEW,
+                FILE_FLAG_NO_BUFFERING | FILE_FLAG_DELETE_ON_CLOSE,
+            )
+        } else {
+            (OPEN_EXISTING, FILE_FLAG_NO_BUFFERING)
+        };
+        // SAFETY : chaîne terminée par un zéro, paramètres valides.
+        let h = unsafe {
+            CreateFileW(
+                w.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                partage,
+                null(),
+                creation,
+                drapeaux,
+                null_mut(),
+            )
+        };
+        if h == INVALID_HANDLE_VALUE || h.is_null() {
+            return Err(format!(
+                "fichier d'essai dans {} : {}",
+                dossier.display(),
+                io::Error::last_os_error()
+            ));
+        }
+        // SAFETY : handle valide que nous possédons désormais.
+        fichiers.push(unsafe { File::from_raw_handle(h as _) });
+    }
+    Ok((fichiers, true))
 }

@@ -452,7 +452,8 @@ pub fn mesurer(
 
 /// Mesure une clé USB de la liste (droits administrateur nécessaires).
 pub fn mesurer_disque(d: &crate::disques::Disque, suivi: &dyn Suivi) -> Result<Mesures, String> {
-    d.retrouver()?;
+    // Lecture seule : la clé qui porte le système en cours est acceptée.
+    d.retrouver_diagnostic()?;
     suivi.etape("Ouverture de la clé en lecture seule");
     mesurer(
         &|| crate::disques::ouvrir_lecture(d),

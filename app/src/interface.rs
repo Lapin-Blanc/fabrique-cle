@@ -97,6 +97,12 @@ struct EtatDiagnostic {
     reglages: Reglages,
     /// Fenêtre de confirmation de l'analyse complète ouverte.
     confirmer_analyse: bool,
+    /// Fenêtre de confirmation de la mesure dans un fichier d'essai ouverte.
+    confirmer_fichier: bool,
+    /// Clés USB qui portent le système en cours (Linux) : proposées au diagnostic seulement.
+    systeme: Vec<Disque>,
+    /// Volumes montés de la clé affichée (relus régulièrement).
+    emplacements: Option<(Disque, Vec<disques::Emplacement>, Instant)>,
     erreur: Option<String>,
 }
 
@@ -175,11 +181,15 @@ impl Appli {
     /// Relit la liste des clés ; garde la sélection si la même clé est toujours là.
     fn detecter(&mut self) {
         self.derniere_detection = Instant::now();
+        self.diag.systeme = disques::lister_systeme_usb();
         match disques::lister() {
             Ok(l) => {
                 self.erreur_disques = None;
+                // La clé système n'est gardée que dans l'onglet Diagnostic.
+                let systeme_permis = self.onglet == Onglet::Diagnostic;
                 if let Some(d) = &self.disque
                     && !l.contains(d)
+                    && !(systeme_permis && self.diag.systeme.contains(d))
                 {
                     self.disque = None;
                 }
@@ -203,10 +213,17 @@ impl Appli {
         }
     }
 
+    /// La clé choisie porte le système en cours (diagnostic seulement, jamais de fabrication).
+    fn disque_systeme(&self) -> bool {
+        self.disque
+            .as_ref()
+            .is_some_and(|d| self.diag.systeme.contains(d))
+    }
+
     /// Ce qui empêche de démarrer (vide = prêt).
     fn obstacles(&self) -> Vec<String> {
         let mut o = Vec::new();
-        if self.disque.is_none() {
+        if self.disque.is_none() || self.disque_systeme() {
             o.push("Choisissez une clé USB.".to_string());
         }
         match self.mode {
@@ -437,10 +454,17 @@ impl Appli {
 
     /// Liste déroulante des clés et bouton « Actualiser » (partagés par les deux onglets).
     fn choix_disque(&mut self, ui: &mut egui::Ui) {
+        let systeme = self.disque_systeme();
         let texte = self
             .disque
             .as_ref()
-            .map(|d| d.libelle())
+            .map(|d| {
+                if systeme {
+                    format!("{} — système en cours", d.libelle())
+                } else {
+                    d.libelle()
+                }
+            })
             .unwrap_or_else(|| {
                 if self.disques.is_empty() {
                     "Aucune clé USB détectée — branchez-en une".into()
@@ -468,6 +492,15 @@ impl Appli {
                 .show_ui(ui, |ui| {
                     for d in &self.disques {
                         ui.selectable_value(&mut self.disque, Some(d.clone()), d.libelle());
+                    }
+                    if self.onglet == Onglet::Diagnostic {
+                        for d in &self.diag.systeme {
+                            ui.selectable_value(
+                                &mut self.disque,
+                                Some(d.clone()),
+                                format!("{} — système en cours", d.libelle()),
+                            );
+                        }
                     }
                 });
             r.response.on_hover_text(texte);
@@ -696,7 +729,7 @@ impl Appli {
                     ui.label(
                         egui::RichText::new(
                             "Mesures en lecture seule : rien n'est écrit sur la clé. \
-                             Seule l'analyse complète (carte 4) l'efface.",
+                             Seule l'analyse complète (carte 5) l'efface.",
                         )
                         .weak(),
                     );
@@ -895,6 +928,9 @@ impl eframe::App for Appli {
         }
         if self.diag.confirmer_analyse {
             self.ui_confirmation_analyse(&ctx);
+        }
+        if self.diag.confirmer_fichier {
+            self.ui_confirmation_fichier(&ctx);
         }
     }
 

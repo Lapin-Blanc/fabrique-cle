@@ -73,7 +73,13 @@ mod tests {
     /// Toute clé utilisée par l'application existe dans le fichier de textes.
     #[test]
     fn tous_les_textes_existent() {
-        for c in ["introduction", "certitudes", "categories", "analyse"] {
+        for c in [
+            "introduction",
+            "certitudes",
+            "categories",
+            "analyse",
+            "espace_libre",
+        ] {
             assert!(!texte(c).is_empty(), "texte [{c}] manquant");
         }
         for c in super::super::interpretation::CLES {

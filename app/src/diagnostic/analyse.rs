@@ -86,6 +86,10 @@ pub struct Analyse {
     pub synchro: Aleatoire,
     pub longue: EcritureLongue,
     pub lecture_donnees: Aleatoire,
+    /// `Some(dossier)` : mesure non destructive, dans un fichier d'essai de ce dossier (pas de
+    /// contrôle de capacité) ; `None` : analyse complète du disque brut.
+    #[serde(default)]
+    pub fichier: Option<String>,
 }
 
 /// Contenu d'un marqueur : en-tête (magie, session, position, rang) puis octets pseudo-aléatoires
@@ -326,7 +330,115 @@ pub fn analyser<S: Support>(
         synchro,
         longue,
         lecture_donnees,
+        fichier: None,
     })
+}
+
+/// Zone de travail des tests aléatoires dans le fichier d'essai.
+pub const ZONE_FICHIER: u64 = 256 << 20;
+/// Espace minimal utilisable pour une mesure dans un fichier d'essai.
+pub const LIBRE_MIN: u64 = 512 << 20;
+
+/// Part de l'espace libre que l'on s'autorise à occuper : on laisse au moins 10 % et 512 Mio.
+pub fn utilisable(libre: u64) -> u64 {
+    libre.saturating_sub((libre / 10).max(512 << 20))
+}
+
+/// Mesures d'écriture **sans rien effacer**, dans un fichier d'essai (`utilisable` octets au
+/// plus) : zone de travail écrite d'abord, puis écritures aléatoires, synchronisées, lectures sur
+/// ces données, et enfin la longue écriture séquentielle dans le reste de la place permise.
+pub fn analyser_fichier<S: Support>(
+    supports: &[S],
+    directes: bool,
+    utilisable: u64,
+    reglages: Reglages,
+    suivi: &dyn Suivi,
+) -> Result<Analyse, String> {
+    if utilisable < LIBRE_MIN / 2 {
+        return Err("pas assez d'espace libre sur la clé pour mesurer l'écriture.".into());
+    }
+    let s = &supports[0];
+    let un = std::slice::from_ref(s);
+    let duree = Duration::from_secs(reglages.duree_aleatoire_s);
+
+    suivi.etape("1/5 — Préparation : écriture de la zone de travail (256 Mo)");
+    let zone = ecriture_longue(
+        s,
+        (0, ZONE_FICHIER.min(utilisable)),
+        Duration::from_secs(3600),
+        suivi,
+    )?;
+    let zone = (0, zone.octets);
+
+    suivi.etape("2/5 — Écritures aléatoires de 4 Ko, une à la fois");
+    let ecriture_1 = aleatoire(un, zone, duree, Mode::Ecriture, suivi)?;
+    suivi.etape(&format!(
+        "2/5 — Écritures aléatoires de 4 Ko, {EN_PARALLELE} à la fois"
+    ));
+    let ecriture_n = aleatoire(supports, zone, duree, Mode::Ecriture, suivi)?;
+
+    suivi.etape("3/5 — Écritures synchronisées (comme un journal ou une base de données)");
+    let synchro = aleatoire(un, zone, duree, Mode::EcritureSynchro, suivi)?;
+
+    suivi.etape("4/5 — Lectures aléatoires sur les données écrites");
+    let lecture_donnees = aleatoire(
+        un,
+        zone,
+        duree.min(Duration::from_secs(6)),
+        Mode::Lecture,
+        suivi,
+    )?;
+
+    suivi.etape("5/5 — Longue écriture séquentielle (recherche du cache SLC)");
+    let longue = ecriture_longue(
+        s,
+        (zone.1, utilisable),
+        Duration::from_secs(reglages.duree_longue_s),
+        suivi,
+    )?;
+
+    Ok(Analyse {
+        directes,
+        ecriture_1,
+        ecriture_n,
+        synchro,
+        longue,
+        lecture_donnees,
+        ..Default::default()
+    })
+}
+
+/// Mesure l'écriture d'une clé dans un fichier d'essai, sur le volume monté qui a le plus
+/// d'espace libre. N'efface rien et ne demande pas de droits administrateur (Linux).
+pub fn analyser_espace_libre(
+    d: &crate::disques::Disque,
+    reglages: Reglages,
+    suivi: &dyn Suivi,
+) -> Result<Analyse, String> {
+    d.retrouver_diagnostic()?;
+    let e = crate::disques::emplacements(d)
+        .into_iter()
+        .max_by_key(|e| e.libre)
+        .ok_or(
+            "Aucun volume de cette clé n'est ouvert en écriture : ouvrez-la dans l'explorateur de \
+             fichiers, puis recommencez.",
+        )?;
+    let utilisable = utilisable(e.libre);
+    if utilisable < LIBRE_MIN / 2 {
+        return Err(format!(
+            "Pas assez d'espace libre sur {} ({}) pour mesurer l'écriture.",
+            e.dossier.display(),
+            crate::suivi::taille_lisible(e.libre)
+        ));
+    }
+    suivi.etape("Création du fichier d'essai");
+    let (fichiers, directes) = crate::disques::creer_fichier_essai(&e.dossier, EN_PARALLELE)?;
+    let mut a = analyser_fichier(&fichiers, directes, utilisable, reglages, suivi)?;
+    // Le fichier disparaît à la fermeture des descripteurs (voir `creer_fichier_essai`).
+    drop(fichiers);
+    a.fichier = Some(e.dossier.display().to_string());
+    suivi.progres(1.0, "");
+    Ok(a)
 }
 
 /// Remet à zéro le premier et le dernier Mio : la clé apparaît vide, sans table de partitions.
@@ -440,6 +552,37 @@ mod tests {
         let c = capacite(&cle, 128 * MIO, &Muet).unwrap();
         assert!(c.repliement && !c.conforme());
         assert!(c.fiable <= 24 * MIO);
+    }
+
+    /// Mesure dans un vrai fichier d'essai, créé dans un dossier temporaire : rien d'autre n'est
+    /// touché, et le fichier a disparu à la fin.
+    #[test]
+    fn mesure_dans_un_fichier_d_essai() {
+        let dossier =
+            std::env::temp_dir().join(format!("fabcle-espace-libre-{}", std::process::id()));
+        std::fs::create_dir_all(&dossier).unwrap();
+        std::fs::write(dossier.join("document.txt"), b"precieux").unwrap();
+        let (fichiers, directes) =
+            crate::disques::creer_fichier_essai(&dossier, EN_PARALLELE).unwrap();
+        let r = Reglages {
+            duree_longue_s: 1,
+            duree_aleatoire_s: 1,
+        };
+        let a = analyser_fichier(&fichiers, directes, 600 * MIO, r, &Muet).unwrap();
+        drop(fichiers);
+        assert!(a.ecriture_1.operations > 0 && a.synchro.operations > 0);
+        assert_eq!(a.lecture_donnees.part_vide, 0.0);
+        assert!(a.longue.octets > 0);
+        assert_eq!(a.capacite.marqueurs, 0);
+        let restants: Vec<_> = std::fs::read_dir(&dossier).unwrap().flatten().collect();
+        assert_eq!(restants.len(), 1);
+        assert_eq!(
+            std::fs::read(dossier.join("document.txt")).unwrap(),
+            b"precieux"
+        );
+        std::fs::remove_dir_all(&dossier).ok();
+        // Trop peu de place : refus.
+        assert!(utilisable(600 * MIO) < LIBRE_MIN / 2);
     }
 
     #[test]

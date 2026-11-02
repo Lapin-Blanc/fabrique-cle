@@ -1,7 +1,7 @@
 //! Linux : liste des disques via sysfs, ouverture exclusive du périphérique (root nécessaire :
 //! l'interface relance l'application en « assistant » avec pkexec, voir `assistant.rs`).
 
-use super::{Disque, propre};
+use super::{Disque, Emplacement, propre};
 use crate::diagnostic::materiel::Materiel;
 use crate::ecriture::Cible;
 use std::collections::HashSet;
@@ -110,6 +110,26 @@ fn serie_udev(nom: &str) -> String {
 }
 
 pub fn lister() -> Result<Vec<Disque>, String> {
+    Ok(lister_usb()?
+        .into_iter()
+        .filter(|(_, systeme)| !systeme)
+        .map(|(d, _)| d)
+        .collect())
+}
+
+/// Disques USB qui portent le système en cours (clé Fabrique-Clé démarrée) : proposés seulement
+/// par l'onglet Diagnostic, pour des mesures qui n'effacent rien. Jamais par la fabrication.
+pub fn lister_systeme_usb() -> Vec<Disque> {
+    lister_usb()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, systeme)| *systeme)
+        .map(|(d, _)| d)
+        .collect()
+}
+
+/// Tous les disques USB, avec l'indication « porte le système en cours ».
+fn lister_usb() -> Result<Vec<(Disque, bool)>, String> {
     let systeme = disques_systeme();
     let mut disques = Vec::new();
     let entrees = fs::read_dir("/sys/block").map_err(|e| format!("lecture de /sys/block : {e}"))?;
@@ -120,7 +140,6 @@ pub fn lister() -> Result<Vec<Disque>, String> {
         ]
         .iter()
         .any(|p| nom.starts_with(p))
-            || systeme.contains(&nom)
         {
             continue;
         }
@@ -138,14 +157,17 @@ pub fn lister() -> Result<Vec<Disque>, String> {
             lire(e.path().join("device/vendor")),
             lire(e.path().join("device/model"))
         ));
-        disques.push(Disque {
-            chemin: format!("/dev/{nom}"),
-            nom: nom_affiche,
-            serie: serie_udev(&nom),
-            taille,
-        });
+        disques.push((
+            Disque {
+                chemin: format!("/dev/{nom}"),
+                nom: nom_affiche,
+                serie: serie_udev(&nom),
+                taille,
+            },
+            systeme.contains(&nom),
+        ));
     }
-    disques.sort_by(|a, b| a.chemin.cmp(&b.chemin));
+    disques.sort_by(|a, b| a.0.chemin.cmp(&b.0.chemin));
     Ok(disques)
 }
 
@@ -295,6 +317,132 @@ pub fn ouvrir_ecriture(d: &Disque) -> Result<(File, bool), String> {
     }
 }
 
+/// Point de montage tel qu'écrit dans /proc/self/mountinfo (espaces codés « \040 »…).
+fn decoder_montage(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\'
+            && i + 3 < b.len()
+            && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 4], 8)
+        {
+            out.push(v);
+            i += 4;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Espace disponible pour un utilisateur ordinaire dans `dossier`, et identifiant du système de
+/// fichiers qui le porte.
+fn libre_et_volume(dossier: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dossier.as_os_str().as_bytes()).ok()?;
+    // SAFETY : chaîne C valide, structure de sortie possédée.
+    let mut v: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut v) } != 0 {
+        return None;
+    }
+    let dev = fs::metadata(dossier).ok()?.dev();
+    Some((v.f_bavail as u64 * v.f_frsize as u64, dev))
+}
+
+fn inscriptible(dossier: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(dossier.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY : chaîne C valide.
+    unsafe { libc::access(c.as_ptr(), libc::W_OK) == 0 }
+}
+
+/// Volumes de la clé montés en lecture-écriture, avec un dossier où l'utilisateur peut écrire
+/// (la racine du volume, sinon son dossier personnel ou /var/tmp s'ils sont sur ce volume : cas
+/// d'une clé Fabrique-Clé démarrée, dont le système est chiffré).
+pub fn emplacements(d: &Disque) -> Vec<Emplacement> {
+    let Some(nom) = d.chemin.strip_prefix("/dev/") else {
+        return Vec::new();
+    };
+    let mut res: Vec<Emplacement> = Vec::new();
+    let mut vus = HashSet::new();
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    for ligne in mountinfo.lines() {
+        let champs: Vec<&str> = ligne.split(' ').collect();
+        if champs.len() < 6 || champs[2].starts_with("0:") {
+            continue;
+        }
+        if champs[5].split(',').any(|o| o == "ro") {
+            continue;
+        }
+        let mut acc = HashSet::new();
+        disques_sous_jacents(&Path::new("/sys/dev/block").join(champs[2]), &mut acc, 0);
+        if !acc.contains(nom) || !vus.insert(champs[2].to_string()) {
+            continue;
+        }
+        let point = PathBuf::from(decoder_montage(champs[4]));
+        let Some((_, volume)) = libre_et_volume(&point) else {
+            continue;
+        };
+        let mut candidats = vec![point.clone()];
+        if let Some(h) = std::env::var_os("HOME") {
+            candidats.push(PathBuf::from(h));
+        }
+        candidats.push(PathBuf::from("/var/tmp"));
+        if let Some((dossier, libre)) = candidats.into_iter().find_map(|c| {
+            let (libre, v) = libre_et_volume(&c)?;
+            (v == volume && inscriptible(&c)).then_some((c, libre))
+        }) {
+            res.push(Emplacement { dossier, libre });
+        }
+    }
+    res
+}
+
+/// Crée un fichier d'essai dans `dossier` et l'ouvre `n` fois en lecture-écriture directe.
+/// Le fichier est retiré du dossier aussitôt ouvert : il disparaît à la fermeture du dernier
+/// descripteur, même si l'application s'arrête brutalement. Aucun autre fichier n'est touché.
+pub fn creer_fichier_essai(dossier: &Path, n: u32) -> Result<(Vec<File>, bool), String> {
+    let mut alea = [0u8; 8];
+    let _ = getrandom::fill(&mut alea);
+    let chemin = dossier.join(format!(
+        ".fabrique-cle-essai-{}-{}.tmp",
+        std::process::id(),
+        hex::encode(alea)
+    ));
+    let ouvrir = |creer: bool, direct: bool| {
+        let mut o = fs::OpenOptions::new();
+        o.read(true).write(true);
+        if creer {
+            o.create_new(true).mode(0o600);
+        }
+        o.custom_flags(if direct { libc::O_DIRECT } else { 0 } | libc::O_CLOEXEC)
+            .open(&chemin)
+    };
+    let erreur = |e: io::Error| format!("fichier d'essai dans {} : {e}", dossier.display());
+    let (premier, directes) = match ouvrir(true, true) {
+        Ok(f) => (f, true),
+        Err(e) if e.raw_os_error() == Some(libc::EINVAL) => {
+            // Système de fichiers sans E/S directes : sans elles (mesures moins fiables).
+            let _ = fs::remove_file(&chemin);
+            (ouvrir(true, false).map_err(erreur)?, false)
+        }
+        Err(e) => return Err(erreur(e)),
+    };
+    let mut fichiers = vec![premier];
+    let suite = (1..n).try_for_each(|_| {
+        fichiers.push(ouvrir(false, directes)?);
+        Ok::<(), io::Error>(())
+    });
+    let retrait = fs::remove_file(&chemin);
+    suite.map_err(erreur)?;
+    retrait.map_err(erreur)?;
+    Ok((fichiers, directes))
+}
+
 /// Ce que sysfs dit de la clé (lisible sans droits particuliers).
 pub fn identifier(d: &Disque) -> Materiel {
     let mut m = Materiel::default();
@@ -401,6 +549,32 @@ impl Cible for DisqueLinux {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn montage_decode() {
+        assert_eq!(super::decoder_montage("/media/a\\040b"), "/media/a b");
+        assert_eq!(super::decoder_montage("/"), "/");
+    }
+
+    /// Le fichier d'essai n'apparaît jamais dans le dossier, et disparaît à la fermeture.
+    #[test]
+    fn fichier_essai_invisible_et_efface() {
+        use std::io::{Read, Seek, SeekFrom, Write};
+        let dossier = std::env::temp_dir().join(format!("fabcle-essai-{}", std::process::id()));
+        std::fs::create_dir_all(&dossier).unwrap();
+        let (mut f, _) = super::creer_fichier_essai(&dossier, 3).unwrap();
+        assert_eq!(f.len(), 3);
+        assert_eq!(std::fs::read_dir(&dossier).unwrap().count(), 0);
+        // Les descripteurs partagent bien le même fichier.
+        let bloc = crate::diagnostic::mesures::TamponAligne::new(4096);
+        let _ = f[0].write_all(&bloc);
+        let mut lu = vec![1u8; 1];
+        f[2].seek(SeekFrom::Start(0)).unwrap();
+        f[2].read_exact(&mut lu).ok();
+        drop(f);
+        assert_eq!(std::fs::read_dir(&dossier).unwrap().count(), 0);
+        std::fs::remove_dir_all(&dossier).ok();
+    }
+
     #[test]
     fn le_disque_systeme_n_est_jamais_propose() {
         let systeme = super::disques_systeme();

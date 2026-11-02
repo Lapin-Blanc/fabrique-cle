@@ -241,6 +241,20 @@ marqueur replié retombe sur un marqueur déjà écrit et l'écrase : la relectu
 contrôle par échantillon, en quelques secondes ; une vérification exhaustive (logiciels f3 ou
 H2testw) écrit et relit toute la surface, ce qui prend des heures.
 
+[espace_libre]
+Cette mesure écrit dans un fichier temporaire, sur l'espace libre d'un volume de la clé déjà
+ouvert (une clé Fabrique-Clé démarrée convient aussi). Elle ne touche à aucun fichier existant et
+ne demande pas d'effacer la clé. Le fichier est supprimé automatiquement à la fin, même si
+l'application s'arrête brutalement. On laisse toujours au moins 10 % de la place libre.
+
+Elle mesure l'écriture aléatoire de 4 Ko, les écritures synchronisées, les lectures sur données
+réelles et une longue écriture (cache SLC), mais à travers le système de fichiers, et le
+chiffrement s'il y en a un : les chiffres sont un peu moins bons que sur le disque brut, mais plus
+proches de l'usage réel. La capacité réelle, elle, demande l'analyse complète.
+
+La longue écriture s'arrête quand la place permise est remplie : sur une clé presque pleine, elle
+peut ne pas atteindre la fin du cache SLC.
+
 [analyse]
 L'analyse complète écrit sur la clé : elle l'efface entièrement. Elle sert à évaluer une clé avant
 de l'adopter, ou à comparer des modèles. Elle enchaîne cinq tests :
