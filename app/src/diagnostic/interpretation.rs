@@ -710,8 +710,13 @@ fn cache_slc(a: &Analyse) -> Fiche {
 
 fn memoire(a: &Analyse) -> Fiche {
     let v = debit_soutenu(a);
+    // Cache SLC rapide (débit de SSD) qui retombe bas : c'est le profil d'un SSD QLC (ou TLC
+    // sans DRAM), pas d'un SSD TLC ordinaire qui garde 150 Mo/s ou plus après le cache.
+    let ssd_cache_lent = a.longue.chute_apres.is_some() && a.longue.debit_debut >= 200.0;
     let valeur = if v >= 100.0 {
         "écriture soutenue rapide : mémoire de SSD (TLC ou meilleure)"
+    } else if ssd_cache_lent {
+        "SSD à grand cache SLC mais lent ensuite : probablement QLC, ou TLC sans DRAM"
     } else if v >= 30.0 {
         "probablement TLC"
     } else {
@@ -723,7 +728,15 @@ fn memoire(a: &Analyse) -> Fiche {
         valeur,
         Certitude::Deduit,
         appr_soutenu(v),
-        format!("Déduit du débit soutenu : {} Mo/s.", dec(v)),
+        if ssd_cache_lent {
+            format!(
+                "Déduit du débit soutenu : {} Mo/s après le cache SLC ({} Mo/s avant).",
+                dec(v),
+                dec(a.longue.debit_debut)
+            )
+        } else {
+            format!("Déduit du débit soutenu : {} Mo/s.", dec(v))
+        },
     )
 }
 
@@ -1123,6 +1136,21 @@ mod tests {
         assert_eq!(par("capacite").appreciation, Appreciation::Bon);
         assert_eq!(par("memoire").appreciation, Appreciation::Faible);
         assert!(par("cache_slc").valeur.contains("puis 12"));
+        assert!(par("memoire").valeur.contains("QLC"));
+        // SSD USB à grand cache SLC (360 Mo/s) puis 40 Mo/s : QLC plutôt que TLC.
+        let mut b = a.clone();
+        b.longue.debit_debut = 360.0;
+        b.longue.debit_fin = 40.0;
+        let f = fiches(&m, 32_000_000_000, None, Some(&b));
+        let v = f.iter().find(|f| f.cle == "memoire").unwrap();
+        assert!(v.valeur.starts_with("SSD à grand cache"), "{}", v.valeur);
+        assert_eq!(v.appreciation, Appreciation::Moyen);
+        // Sans chute, un débit moyen de 300 Mo/s reste « mémoire de SSD ».
+        b.longue.chute_apres = None;
+        b.longue.mo_s = 300.0;
+        let f = fiches(&m, 32_000_000_000, None, Some(&b));
+        let v = f.iter().find(|f| f.cle == "memoire").unwrap();
+        assert!(v.valeur.contains("TLC ou meilleure"), "{}", v.valeur);
         // SSD : 10 000 écritures par seconde (41 Mo/s).
         let a = analyse(10_000.0, 300, true);
         assert!(estimation(&m, None, Some(&a)).0.starts_with("Catégorie D"));
