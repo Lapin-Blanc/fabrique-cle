@@ -3,7 +3,7 @@
 //! Les seuils sont indicatifs : à recalibrer sur des clés de référence.
 
 use super::analyse::Analyse;
-use super::materiel::{Materiel, Protocole, Role, fabricant, nom_vitesse};
+use super::materiel::{Materiel, Protocole, Role, identification, nom_vitesse};
 use super::mesures::{Aleatoire, EN_PARALLELE, Mesures, Sequentielle};
 use crate::disques::Disque;
 use crate::suivi::taille_lisible;
@@ -132,7 +132,7 @@ fn en_attente(cle: &'static str, titre: &'static str) -> Fiche {
 
 fn controleur(m: &Materiel, mes: Option<&Mesures>, an: Option<&Analyse>) -> Fiche {
     use Appreciation::*;
-    let fab = m.vid.and_then(fabricant);
+    let fab = m.vid.and_then(|v| identification(v, m.pid));
     let mut commentaire = match (m.vid, m.pid, fab) {
         (Some(v), Some(p), Some(f)) => format!(
             "Identifiant USB {v:04x}:{p:04x} : {} — {}.",
@@ -141,6 +141,7 @@ fn controleur(m: &Materiel, mes: Option<&Mesures>, an: Option<&Analyse>) -> Fich
                 Role::Marque => "une marque, qui ne dit rien de la puce utilisée",
                 Role::Controleur => "le fabricant de la puce lui-même",
                 Role::Pont => "un pont USB vers un SSD SATA ou NVMe",
+                Role::Ssd => "un contrôleur de SSD qui parle USB directement, sans pont",
                 Role::Suspect =>
                     "identifiant fantaisiste, typique des clés anonymes ou contrefaites",
             }
@@ -191,6 +192,7 @@ fn controleur(m: &Materiel, mes: Option<&Mesures>, an: Option<&Analyse>) -> Fich
     }
     let (valeur, appr) = match fab.map(|f| f.role) {
         Some(Role::Pont) => ("probablement un SSD derrière un pont USB", Bon),
+        Some(Role::Ssd) => ("contrôleur de SSD portable", Bon),
         Some(Role::Suspect) => ("clé générique, probablement de très bas de gamme", Faible),
         _ if uas && trim => ("probablement de type SSD", Bon),
         _ if uas => ("peut-être de type SSD (UAS, mais sans TRIM)", Moyen),
@@ -852,10 +854,11 @@ pub fn estimation(
         let bot = m.protocole() == Some(Protocole::Bot);
         let trim = m.trim == Some(true);
         let parallele = mes.map(gain_parallele);
+        // Pont USB vers SSD, ou contrôleur de SSD USB natif (modèle ou fabricant connu).
         let pont = m
             .vid
-            .and_then(fabricant)
-            .is_some_and(|f| f.role == Role::Pont);
+            .and_then(|v| identification(v, m.pid))
+            .is_some_and(|f| matches!(f.role, Role::Pont | Role::Ssd));
         let (t, ap) = if pont || (uas && trim && parallele.is_none_or(|g| g >= 1.8)) {
             (
                 "Plutôt catégorie C ou D : contrôleur de type SSD. Un bon choix pour un système.",

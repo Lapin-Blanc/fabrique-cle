@@ -1,11 +1,12 @@
 # Fabrique-Clé — identifiants de fabricants USB (VID) connus, pour l'onglet Diagnostic.
 #
-# Format : VID (hexadécimal)  rôle  nom
+# Format : VID (hexadécimal) ou VID:PID (un modèle précis)  rôle  nom
 # Rôles :
 #   marque      fabricant de clés ou de SSD : le VID ne dit rien de la puce utilisée
 #   controleur  fabricant de contrôleurs de clés : la marque a laissé l'identifiant de la puce
 #   pont        pont USB vers SATA ou NVMe : presque toujours un vrai SSD derrière
 #   suspect     identifiant fantaisiste, typique des clés anonymes ou contrefaites
+#   ssd         (modèles) contrôleur de SSD qui parle USB directement, sans pont
 #
 # Le VID est celui de l'entreprise qui a enregistré le produit auprès de l'USB-IF. Une marque peut
 # changer de contrôleur d'une série à l'autre sans changer de VID : ce n'est qu'un indice.
@@ -37,3 +38,10 @@
 1b1c  marque      Corsair
 0bc2  marque      Seagate
 abcd  suspect     VID non attribué (« abcd ») : clé générique, souvent contrefaite
+
+# Modèles (VID:PID) : plus précis que le fabricant seul. Ceux-ci ont été rencontrés en essai.
+0bda:9210  pont  Realtek RTL9210, pont USB 3.2 Gen 2 vers SSD NVMe ou SATA M.2
+090c:2320  ssd   Silicon Motion SM2320, contrôleur de SSD portable USB 3.2 Gen 2
+152d:0583  pont  JMicron JMS583, pont USB 3.2 Gen 2 vers SSD NVMe
+152d:0578  pont  JMicron JMS578, pont USB 3 vers SSD SATA
+174c:2362  pont  ASMedia ASM2362, pont USB 3.2 Gen 2 vers SSD NVMe

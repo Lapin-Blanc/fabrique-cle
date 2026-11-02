@@ -92,15 +92,19 @@ pub enum Role {
     Pont,
     /// Identifiant fantaisiste, typique des clés anonymes ou contrefaites.
     Suspect,
+    /// Contrôleur de SSD qui parle USB directement (SSD portable sans pont).
+    Ssd,
 }
 
 pub struct Fabricant {
     pub vid: u16,
+    /// `Some` : entrée propre à un modèle (VID:PID), plus précise que celle du fabricant.
+    pub pid: Option<u16>,
     pub role: Role,
     pub nom: &'static str,
 }
 
-/// Table `ressources/diagnostic/fabricants-usb.txt` (VID, rôle, nom), lue une fois.
+/// Table `ressources/diagnostic/fabricants-usb.txt` (VID ou VID:PID, rôle, nom), lue une fois.
 pub fn fabricants() -> &'static [Fabricant] {
     static TABLE: std::sync::OnceLock<Vec<Fabricant>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
@@ -118,8 +122,13 @@ fn analyser_fabricants(texte: &'static str) -> Vec<Fabricant> {
         .filter_map(|l| {
             let (vid, reste) = l.split_once(char::is_whitespace)?;
             let (role, nom) = reste.trim_start().split_once(char::is_whitespace)?;
+            let (vid, pid) = match vid.split_once(':') {
+                Some((v, p)) => (v, Some(u16::from_str_radix(p, 16).ok()?)),
+                None => (vid, None),
+            };
             let vid = u16::from_str_radix(vid, 16).ok()?;
             let role = match role {
+                "ssd" => Role::Ssd,
                 "marque" => Role::Marque,
                 "controleur" => Role::Controleur,
                 "pont" => Role::Pont,
@@ -128,6 +137,7 @@ fn analyser_fabricants(texte: &'static str) -> Vec<Fabricant> {
             };
             Some(Fabricant {
                 vid,
+                pid,
                 role,
                 nom: nom.trim(),
             })
@@ -136,7 +146,19 @@ fn analyser_fabricants(texte: &'static str) -> Vec<Fabricant> {
 }
 
 pub fn fabricant(vid: u16) -> Option<&'static Fabricant> {
-    fabricants().iter().find(|f| f.vid == vid)
+    fabricants()
+        .iter()
+        .find(|f| f.vid == vid && f.pid.is_none())
+}
+
+/// Entrée la plus précise connue : le modèle (VID:PID), sinon le fabricant (VID).
+pub fn identification(vid: u16, pid: Option<u16>) -> Option<&'static Fabricant> {
+    pid.and_then(|p| {
+        fabricants()
+            .iter()
+            .find(|f| f.vid == vid && f.pid == Some(p))
+    })
+    .or_else(|| fabricant(vid))
 }
 
 #[cfg(test)]
@@ -157,6 +179,14 @@ mod tests {
         );
         assert_eq!(fabricant(0x0781).unwrap().nom, "SanDisk");
         assert_eq!(fabricant(0x152d).unwrap().role, Role::Pont);
+        // Modèle connu : plus précis que le fabricant.
+        let sm = identification(0x090c, Some(0x2320)).unwrap();
+        assert_eq!(sm.role, Role::Ssd);
+        assert!(sm.nom.contains("SM2320"));
+        assert_eq!(
+            identification(0x090c, Some(0x1000)).unwrap().role,
+            Role::Controleur
+        );
     }
 
     #[test]
