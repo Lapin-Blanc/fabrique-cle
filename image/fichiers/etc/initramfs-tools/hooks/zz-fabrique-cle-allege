@@ -1,0 +1,35 @@
+#!/bin/sh
+# Fabrique-Clé — initramfs allégé. Il est lu depuis la clé par le firmware à chaque démarrage
+# (12 s pour 133 Mo sur une clé lente). Retire les pilotes graphiques et réseau, et les firmwares
+# qu'eux seuls demandent (~180 Mo non compressés : amdgpu, nvidia, i915…) : inutiles pour ouvrir
+# le volume chiffré. La question LUKS s'affiche avec l'affichage UEFI de base (simpledrm, intégré
+# au noyau) ; les pilotes complets se chargent ensuite depuis le système, comme d'habitude.
+# Tous les pilotes de stockage, USB et clavier restent (MODULES=most : clé nomade, matériel inconnu).
+# Nommé zz- : passe après les autres hooks ; depmod est exécuté ensuite par mkinitramfs.
+# Attention : les modules mis en file par les hooks (manual_add_modules) ne sont copiés qu'APRÈS
+# tous les hooks (apply_add_modules) : ce hook ne peut pas les retirer. C'est pourquoi plymouth,
+# dont le hook ajoute tout drivers/gpu/drm, est exclu de l'image (construire-image.sh).
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+
+mods="$DESTDIR/usr/lib/modules/$version"
+[ -d "$mods" ] || mods="$DESTDIR/lib/modules/$version"
+fw="$DESTDIR/usr/lib/firmware"
+[ -d "$fw" ] || fw="$DESTDIR/lib/firmware"
+retires="$mods/kernel/drivers/gpu $mods/kernel/drivers/net"
+
+t=$(mktemp -d)
+# Firmwares demandés par les pilotes retirés, sauf ceux aussi demandés par un pilote conservé
+for d in $retires; do [ -d "$d" ] && find "$d" -name '*.ko*' -exec modinfo -F firmware {} + ; done 2>/dev/null | sort -u > "$t/retires"
+rm -rf $retires
+find "$mods" -name '*.ko*' -exec modinfo -F firmware {} + 2>/dev/null | sort -u > "$t/gardes"
+comm -23 "$t/retires" "$t/gardes" | while IFS= read -r n; do
+  [ -n "$n" ] || continue
+  # Noms éventuellement génériques (« nvidia/*/gsp/*.bin ») : expansion volontaire
+  for f in "$fw"/$n "$fw"/$n.zst "$fw"/$n.xz; do
+    [ -e "$f" ] || [ -L "$f" ] && rm -f "$f"
+  done
+done
+find "$fw" -type d -empty -delete 2>/dev/null || true
+rm -rf "$t"

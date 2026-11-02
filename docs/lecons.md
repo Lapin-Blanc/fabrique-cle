@@ -55,8 +55,12 @@
 - `~/.cache` en tmpfs suffit pour les caches de navigateur. **profile-sync-daemon écarté** : jusqu'à
   1 h de profil perdue si la clé est arrachée, et il faut le maintenir par navigateur.
 - `commit=30` plutôt que 60 : compromis entre écritures et données perdues en cas d'arrachage.
-- Démarrage : 12 s dans GRUB à charger un `initrd` de 133 Mo depuis la clé lente (piste : en retirer
-  les pilotes graphiques et leurs firmwares).
+- Démarrage : 12 s dans GRUB à charger un `initrd` de 133 Mo depuis la clé lente. Mesure (264 Mo non
+  compressés) : firmwares graphiques ~162 Mo (amdgpu 80, nvidia 63, i915 11…), pilotes graphiques 10 Mo,
+  réseau ~15 Mo avec firmwares, microcode 15 Mo. Le hook `zz-fabrique-cle-allege` retire `drivers/gpu`,
+  `drivers/net` et les firmwares qu'eux seuls demandent (`modinfo -F firmware`) ; la question LUKS
+  s'affiche via simpledrm (intégré au noyau). Garde-fous à la construction (taille ≤ 70 Mo, dm-crypt,
+  usb-storage, uas, xhci, hid présents) et deuxième démarrage testé jusqu'à SDDM.
 
 - Exclure un navigateur ne suffit pas : `webext-plasma-browser-integration` (recommandé par Plasma)
   recommande « firefox-esr | firefox | chromium » ; exclure Firefox ferait prendre Chromium.

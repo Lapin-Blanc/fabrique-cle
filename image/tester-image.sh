@@ -156,6 +156,76 @@ detacher
 [ "$rc" -eq 0 ] || exit 1
 
 # ---------------------------------------------------------------------------
+journal "Deuxième démarrage : phrase LUKS au clavier, jusqu'à l'écran de connexion"
+# Vérifie ce que le premier démarrage ne voit pas : la question LUKS (initramfs allégé, clavier
+# belge) puis le démarrage complet jusqu'à SDDM, avec la phrase tapée au clavier virtuel.
+cat > "$TRAV/ecran.py" <<'PY'
+# ecran.py capture.ppm [précédente.ppm] -> « sombre couleurs différence »
+import sys
+def lire(f):
+    d = open(f, "rb").read().split(b"\n", 3)
+    return d[3]
+px = lire(sys.argv[1])
+pas = 3 * 11
+idx = range(0, len(px) - 2, pas)
+sombres = sum(1 for i in idx if px[i] < 40 and px[i + 1] < 40 and px[i + 2] < 40) / max(1, len(idx))
+couleurs = len({(px[i] >> 4, px[i + 1] >> 4, px[i + 2] >> 4) for i in idx})
+diff = 1.0
+if len(sys.argv) > 2:
+    try:
+        q = lire(sys.argv[2])
+        if len(q) == len(px):
+            diff = sum(1 for i in idx if px[i:i + 3] != q[i:i + 3]) / max(1, len(idx))
+    except OSError:
+        pass
+print(f"{sombres:.3f} {couleurs} {diff:.4f}")
+PY
+capture() { moniteur "screendump $1" && sleep 1 && python3 "$TRAV/ecran.py" "$1" "${2:-}"; }
+rm -f "$TRAV/monitor.sock" "$TRAV"/e2-*.ppm
+timeout 900 qemu-system-x86_64 "${KVM[@]}" \
+  -machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on \
+  -m 3072 -smp 2 \
+  -drive if=pflash,format=raw,unit=0,file="$CODE",readonly=on \
+  -drive if=pflash,format=raw,unit=1,file="$TRAV/vars.fd" \
+  -device qemu-xhci -drive if=none,id=cle,format=raw,file="$TEST" -device usb-storage,drive=cle,removable=on \
+  -nic user,model=virtio-net-pci \
+  -display none -monitor unix:"$TRAV/monitor.sock",server,nowait \
+  -serial file:"$TRAV/serie2.log" &
+QEMU=$!
+sleep 15
+etat=attente; essais=0; debut=$SECONDS; precedent=
+while kill -0 $QEMU 2>/dev/null && (( SECONDS - debut < 600 )); do
+  sleep 5
+  f="$TRAV/e2-$SECONDS.ppm"
+  read -r sombre couleurs diff < <(capture "$f" "$precedent" || echo "1 0 1")
+  precedent=$f
+  # Écran de connexion : image en couleurs (fond Plasma), plus un écran de texte
+  if [ "$etat" = saisie ] && awk "BEGIN{exit !($sombre < 0.5 && $couleurs > 40)}"; then
+    echo "Écran de connexion atteint $((SECONDS - debut)) s après la saisie (sombre=$sombre couleurs=$couleurs)"
+    cp "$f" "$TRAV/connexion.ppm"; etat=connexion; break
+  fi
+  # Question LUKS : écran sombre, avec un peu de texte, stable entre deux captures
+  if awk "BEGIN{exit !($sombre > 0.9 && $sombre < 0.9999 && $diff < 0.002)}"; then
+    if [ "$etat" = attente ] || { [ "$etat" = saisie ] && (( SECONDS - t_saisie > 90 && essais < 2 )); }; then
+      essais=$((essais + 1)); t_saisie=$SECONDS
+      echo "Question LUKS (écran stable, sombre=$sombre) : saisie de la phrase, essai $essais"
+      cp "$f" "$TRAV/question-luks.ppm"
+      taper "$PHRASE"; etat=saisie
+    fi
+  fi
+done
+if [ "$etat" != connexion ]; then
+  echo "ÉCHEC : écran de connexion jamais atteint au deuxième démarrage (état : $etat, voir ecran.ppm)"
+  cp "${precedent:-/dev/null}" "$TRAV/ecran.ppm" 2>/dev/null || true
+  kill $QEMU 2>/dev/null; wait $QEMU 2>/dev/null; exit 1
+fi
+# Arrêt propre (bouton d'alimentation ACPI), sinon coupure au bout de 2 min
+moniteur system_powerdown || true
+for _ in $(seq 24); do kill -0 $QEMU 2>/dev/null || break; sleep 5; done
+kill -0 $QEMU 2>/dev/null && { echo "Arrêt ACPI trop long : coupure"; moniteur quit || kill $QEMU; }
+wait $QEMU 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 journal "Inspection de la clé après le premier démarrage"
 attacher
 P3=${LOOP}p3

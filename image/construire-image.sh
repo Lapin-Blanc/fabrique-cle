@@ -264,7 +264,7 @@ chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Opt
   intel-microcode amd64-microcode \
   kde-plasma-desktop sddm plasma-nm network-manager \
   pipewire-audio wireplumber bluez bluedevil \
-  task-french brave-browser curl plasma-wallpapers-addons konqueror- firefox-esr- chromium- \
+  task-french brave-browser curl plasma-wallpapers-addons konqueror- firefox-esr- chromium- plymouth- plymouth-label- \
   firmware-linux firmware-misc-nonfree \
   firmware-intel-graphics firmware-intel-misc firmware-mediatek firmware-nvidia-graphics \
   firmware-amd-graphics firmware-iwlwifi firmware-realtek firmware-atheros \
@@ -272,11 +272,13 @@ chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Opt
   fonts-noto-extra- fonts-noto-cjk-extra- fonts-noto-ui-extra-
 # (« paquet- » = ne pas installer.) Navigateurs : Brave seul ; webext-plasma-browser-integration
 # (recommandé par Plasma) recommande « firefox-esr | firefox | chromium » : les exclure tous deux.
+# plymouth (écran de démarrage, recommandé) : son hook copie tous les pilotes graphiques dans
+# l'initramfs (~170 Mo avec firmwares) ; l'image démarre en mode texte, sans « splash ».
 # Polices : ces trois paquets, recommandés via fonts-noto, n'apportent que des
 # graisses et largeurs supplémentaires (~600 Mio) : toutes les écritures restent couvertes par
 # fonts-noto-core, fonts-noto-cjk, fonts-noto-ui-core et fonts-noto-mono.
 for p in kde-standard kde-full task-kde-desktop fonts-noto-extra fonts-noto-cjk-extra fonts-noto-ui-extra \
-         konqueror firefox-esr chromium; do
+         konqueror firefox-esr chromium plymouth; do
   if chroot "$MNT" dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok'; then
     echo "ERREUR : $p installé"; exit 1
   fi
@@ -338,6 +340,31 @@ rm -rf "$MNT/tmp/"* "$MNT/var/log/"*.log
 journal "Contrôles"
 K=$(cd "$MNT" && ls boot/initrd.img-* | sort -V | tail -1)
 chroot "$MNT" lsinitramfs "/$K" | grep -E 'cryptroot/(crypttab|keyfiles)|boottime.kmap' | sort
+# Taille de l'initramfs, lue depuis la clé par le firmware à chaque démarrage (lent sur clé USB) :
+# détail des plus gros contenus, pour le garder léger.
+chroot "$MNT" sh -c '
+  i=/'"$K"'; d=$(mktemp -d); unmkinitramfs "$i" "$d"
+  echo "initramfs : $(du -m "$i" | cut -f1) Mo compressé, contenu :"
+  du -sm "$d"/* | sed "s|$d/||"
+  r=$d/main; [ -d "$r" ] || r=$d
+  echo "-- plus gros firmwares :"; du -sm "$r"/usr/lib/firmware/* 2>/dev/null | sort -rn | head -12 | sed "s|$r||"
+  echo "-- plus gros pilotes :"; du -sm "$r"/usr/lib/modules/*/kernel/drivers/* 2>/dev/null | sort -rn | head -12 | sed "s|$r/usr/lib/modules/[^/]*/kernel/||"
+  echo "-- sous-dossiers de drivers/gpu :"; du -sm "$r"/usr/lib/modules/*/kernel/drivers/gpu/drm/* 2>/dev/null | sort -rn | head -8 | sed "s|$r/usr/lib/modules/[^/]*/kernel/||"
+  rm -rf "$d"'
+# Garde-fous de l'allègement (hook zz-fabrique-cle-allege) : ni pilotes graphiques ni réseau,
+# mais toujours de quoi ouvrir le volume (dm-crypt, USB, clavier), et une taille raisonnable.
+LISTE=$(chroot "$MNT" lsinitramfs "/$K")
+if grep -qE 'kernel/drivers/(gpu|net)/' <<<"$LISTE"; then echo "ERREUR : pilotes graphiques ou réseau dans l'initramfs"; exit 1; fi
+INTEGRES=$(cat "$MNT"/usr/lib/modules/"${K#boot/initrd.img-}"/modules.builtin 2>/dev/null || true)
+for m in dm-crypt usb-storage uas xhci-pci hid-generic; do
+  for v in "$m" "${m//-/_}"; do
+    grep -qE "/$v\.ko" <<<"$LISTE"$'\n'"$INTEGRES" && continue 2
+  done
+  echo "ERREUR : $m ni dans l'initramfs ni intégré au noyau"; exit 1
+done
+TAILLE_INITRD=$(du -m "$MNT/$K" | cut -f1)
+[ "$TAILLE_INITRD" -le 70 ] || { echo "ERREUR : initramfs de $TAILLE_INITRD Mo (> 70)"; exit 1; }
+echo "initramfs allégé : $TAILLE_INITRD Mo"
 ls -l "$MNT/boot/efi/EFI/BOOT" "$MNT/boot/efi/EFI/debian"
 cmp "$MNT/boot/efi/EFI/BOOT/BOOTX64.EFI" "$MNT/boot/efi/EFI/debian/shimx64.efi" && echo "BOOTX64.EFI = shim"
 cmp "$MNT/boot/efi/EFI/BOOT/grubx64.efi" "$MNT/boot/efi/EFI/debian/grubx64.efi" && echo "grubx64.efi identique à EFI/debian"

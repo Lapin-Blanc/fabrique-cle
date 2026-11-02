@@ -54,14 +54,14 @@ graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `
 
 ### Image
 - [x] Phrase secrète tapée au clavier virtuel par le test, question réellement visible (fond bleu détecté)
-- [ ] Test d'un **deuxième démarrage** jusqu'à SDDM (phrase LUKS tapée via QMP `send-key`, comme lors de
-      l'installation manuelle), et du parcours **interactif** sans config.txt.
+- [x] Test d'un **deuxième démarrage** jusqu'à SDDM (phrase LUKS tapée au clavier virtuel)
+- [ ] Test du parcours **interactif** sans config.txt (toutes les questions à l'écran).
 - [ ] Test sans chiffrement (`chiffrer=non`).
 - [ ] Vérifier la taille de la clé minimale (16 Go) ; garder l'image compressée sous 2 000 Mio.
 - [ ] Essai sur vrai matériel (portable HP, PC de l'école) : Wi-Fi, son, veille, `lsblk --discard`.
 - [x] Mises à jour : aucune automatique ; Discover les signale (décision du 2026-11-02)
 - [x] Brave seul navigateur ; fond « image du jour » ; réglages pour clé lente (voir `lecons.md`)
-- [ ] `initrd` allégé (sans pilotes graphiques ni leurs firmwares) : démarrage plus rapide sur clé lente
+- [x] `initrd` allégé (sans pilotes graphiques ni réseau ni leurs firmwares) : à mesurer sur clé lente
 - [ ] Vérifier sur une vraie session Plasma : fond « image du jour » appliqué, Brave par défaut, BFQ actif
 - [ ] Options de logiciels supplémentaires (F8) : installées au 1er démarrage si réseau, ou variantes d'image.
 
