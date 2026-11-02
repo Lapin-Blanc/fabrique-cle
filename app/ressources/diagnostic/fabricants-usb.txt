@@ -1,0 +1,39 @@
+# Fabrique-Clé — identifiants de fabricants USB (VID) connus, pour l'onglet Diagnostic.
+#
+# Format : VID (hexadécimal)  rôle  nom
+# Rôles :
+#   marque      fabricant de clés ou de SSD : le VID ne dit rien de la puce utilisée
+#   controleur  fabricant de contrôleurs de clés : la marque a laissé l'identifiant de la puce
+#   pont        pont USB vers SATA ou NVMe : presque toujours un vrai SSD derrière
+#   suspect     identifiant fantaisiste, typique des clés anonymes ou contrefaites
+#
+# Le VID est celui de l'entreprise qui a enregistré le produit auprès de l'USB-IF. Une marque peut
+# changer de contrôleur d'une série à l'autre sans changer de VID : ce n'est qu'un indice.
+
+# Marques
+0781  marque      SanDisk
+0951  marque      Kingston
+04e8  marque      Samsung
+0930  marque      Toshiba / Kioxia
+1058  marque      Western Digital
+154b  marque      PNY
+18a5  marque      Verbatim
+125f  marque      ADATA
+8564  marque      Transcend
+0dd8  marque      Netac
+058f  controleur  Alcor Micro (contrôleurs de clés d'entrée de gamme)
+13fe  controleur  Phison (contrôleurs de clés, parfois de gamme SSD)
+090c  controleur  Silicon Motion (contrôleurs de clés et de SSD)
+048d  controleur  Integrated Technology Express (contrôleurs de clés bon marché)
+1f75  controleur  Innostor (contrôleurs de clés)
+1e3d  controleur  Chipsbank (contrôleurs de clés bon marché)
+0ea0  controleur  Ours Technology (contrôleurs de clés anciens)
+05e3  pont        Genesys Logic (ponts USB-SATA et lecteurs de cartes)
+152d  pont        JMicron (ponts USB-SATA et USB-NVMe)
+174c  pont        ASMedia (ponts USB-SATA et USB-NVMe)
+0bda  pont        Realtek (ponts USB-NVMe RTL9210, mais aussi lecteurs de cartes)
+2109  pont        VIA Labs (ponts et concentrateurs USB)
+13fd  pont        Initio (ponts USB-SATA)
+1b1c  marque      Corsair
+0bc2  marque      Seagate
+abcd  suspect     VID non attribué (« abcd ») : clé générique, souvent contrefaite

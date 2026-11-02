@@ -2,6 +2,7 @@
 //! l'interface relance l'application en « assistant » avec pkexec, voir `assistant.rs`).
 
 use super::{Disque, propre};
+use crate::diagnostic::materiel::Materiel;
 use crate::ecriture::Cible;
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -247,6 +248,84 @@ pub fn ouvrir(d: &Disque) -> Result<Box<dyn Cible>, String> {
         f,
         taille: d.taille,
     }))
+}
+
+/// Ouvre la clé en lecture seule, en contournant le cache (`O_DIRECT`) pour le diagnostic.
+/// Ni démontage ni accès exclusif : une clé en service peut être examinée sans risque.
+/// Retourne aussi `false` si `O_DIRECT` est refusé (lectures alors moins fiables).
+pub fn ouvrir_lecture(d: &Disque) -> Result<(File, bool), String> {
+    let ouvrir = |drapeaux| {
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(drapeaux | libc::O_CLOEXEC)
+            .open(&d.chemin)
+    };
+    match ouvrir(libc::O_DIRECT) {
+        Ok(f) => Ok((f, true)),
+        Err(e) if e.raw_os_error() == Some(libc::EINVAL) => ouvrir(0)
+            .map(|f| (f, false))
+            .map_err(|e| format!("ouverture de {} : {e}", d.chemin)),
+        Err(e) => Err(match e.raw_os_error() {
+            Some(libc::EACCES) | Some(libc::EPERM) => format!(
+                "Accès refusé à {} : droits administrateur nécessaires.",
+                d.chemin
+            ),
+            _ => format!("ouverture de {} : {e}", d.chemin),
+        }),
+    }
+}
+
+/// Ce que sysfs dit de la clé (lisible sans droits particuliers).
+pub fn identifier(d: &Disque) -> Materiel {
+    let mut m = Materiel::default();
+    let Some(nom) = d.chemin.strip_prefix("/dev/") else {
+        return m;
+    };
+    let base = Path::new("/sys/block").join(nom);
+    let q = |f: &str| lire(base.join("queue").join(f));
+    let nombre = |s: String| s.parse::<u64>().ok();
+    m.trim = nombre(q("discard_max_bytes")).map(|v| v > 0);
+    m.transfert_max_kio = nombre(q("max_hw_sectors_kb")).map(|v| v as u32);
+    m.secteur_logique = nombre(q("logical_block_size")).map(|v| v as u32);
+    m.secteur_physique = nombre(q("physical_block_size")).map(|v| v as u32);
+    m.rotatif_declare = nombre(q("rotational")).map(|v| v == 1);
+    // « mq-deadline [bfq] none » : l'ordonnanceur actif est entre crochets.
+    m.ordonnanceur = q("scheduler")
+        .split_whitespace()
+        .find_map(|s| s.strip_prefix('[')?.strip_suffix(']').map(String::from));
+    // File de commandes du périphérique SCSI : 1 en usb-storage, davantage en uas.
+    m.file_commandes = nombre(lire(base.join("device/queue_depth"))).map(|v| v as u32);
+
+    // Remonter l'arborescence : interface USB (pilote), puis périphérique USB (VID, vitesse…).
+    // Ex. …/usb2/2-1/2-1:1.0/host3/target3:0:0/3:0:0:0/block/sdb
+    let reel = fs::canonicalize(&base).unwrap_or_default();
+    for anc in reel.ancestors() {
+        if m.pilote.is_none() && anc.join("bInterfaceClass").exists() {
+            m.pilote = fs::read_link(anc.join("driver"))
+                .ok()
+                .and_then(|l| Some(l.file_name()?.to_string_lossy().into_owned()));
+        }
+        if anc.join("idVendor").exists() {
+            let hexa = |f: &str| u16::from_str_radix(&lire(anc.join(f)), 16).ok();
+            m.vid = hexa("idVendor");
+            m.pid = hexa("idProduct");
+            m.fabricant_usb = lire(anc.join("manufacturer"));
+            m.produit_usb = lire(anc.join("product"));
+            let v = lire(anc.join("version"));
+            m.version_usb = (!v.is_empty()).then_some(v);
+            m.vitesse_mbps = lire(anc.join("speed"))
+                .parse::<f64>()
+                .ok()
+                .map(|v| v as u32);
+            m.superspeed_possible = m
+                .version_usb
+                .as_deref()
+                .and_then(|v| v.split('.').next()?.parse::<u32>().ok())
+                .map(|maj| maj >= 3);
+            break;
+        }
+    }
+    m
 }
 
 // Numéros d'ioctl de <linux/fs.h>.

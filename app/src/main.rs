@@ -8,6 +8,7 @@
 mod assistant;
 mod bmap;
 mod config;
+mod diagnostic;
 mod disques;
 mod ecriture;
 mod esp;
@@ -20,8 +21,10 @@ mod travail;
 
 fn main() -> eframe::Result {
     #[cfg(target_os = "linux")]
-    if std::env::args().nth(1).as_deref() == Some(assistant::OPTION) {
-        std::process::exit(assistant::servir());
+    match std::env::args().nth(1).as_deref() {
+        Some(assistant::OPTION) => std::process::exit(assistant::servir()),
+        Some(assistant::OPTION_DIAGNOSTIC) => std::process::exit(assistant::servir_diagnostic()),
+        _ => {}
     }
 
     let mut viewport = eframe::egui::ViewportBuilder::default();

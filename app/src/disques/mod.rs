@@ -7,12 +7,12 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{lister, ouvrir};
+pub use linux::{identifier, lister, ouvrir, ouvrir_lecture};
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{lister, ouvrir};
+pub use windows::{identifier, lister, ouvrir, ouvrir_lecture};
 
 #[cfg(not(any(target_os = "linux", windows)))]
 pub fn lister() -> Result<Vec<Disque>, String> {
@@ -21,6 +21,14 @@ pub fn lister() -> Result<Vec<Disque>, String> {
 #[cfg(not(any(target_os = "linux", windows)))]
 pub fn ouvrir(_: &Disque) -> Result<Box<dyn crate::ecriture::Cible>, String> {
     Err("système non pris en charge".into())
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn ouvrir_lecture(_: &Disque) -> Result<(std::fs::File, bool), String> {
+    Err("système non pris en charge".into())
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn identifier(_: &Disque) -> crate::diagnostic::materiel::Materiel {
+    Default::default()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

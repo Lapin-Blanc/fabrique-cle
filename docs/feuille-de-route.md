@@ -78,6 +78,14 @@ graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `
       et Linux (Zorin, assistant pkexec)
 - [x] Apparence soignée (police Inter, thèmes clair/sombre, cartes), icône de fenêtre
 - [x] Téléchargement parallèle avec reprise après coupure (repli sur un seul flux)
+- [x] Onglet **Diagnostic**, étape 1 (lecture seule) : identification de la clé, mesures en lecture
+      (séquentielle, aléatoire 4 Ko une et 8 à la fois, latences), fiches explicatives — 2026-11-02
+- [ ] Diagnostic sur vraies clés (Linux et Windows) : SanDisk 3.2 de l'essai du 01/11, SSD SSK, une clé
+      bas de gamme ; calibrer les seuils de `interpretation.rs`
+- [ ] Diagnostic, étape 2 : analyse complète **destructive** (confirmation par n° de série) : capacité
+      réelle (marqueurs sur toute la surface), écriture aléatoire 4 Ko, latence des écritures
+      synchronisées, longue écriture et courbe de débit (cache SLC), graphiques
+- [ ] Diagnostic, étape 3 : rapport exporté (texte/Markdown) pour comparer des modèles
 - [ ] Icône de l'exécutable Windows (ressource .ico)
 - [ ] Signature de code Windows (SmartScreen) : à évaluer (payant)
 

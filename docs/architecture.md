@@ -99,6 +99,8 @@ clé USB → image (version publiée ou fichier local glissé) → personnalisat
 | `theme.rs` | apparence : police Inter embarquée (OFL, `app/ressources/`), couleurs claires et sombres suivant le système (`FABRIQUE_CLE_THEME=clair\|sombre` pour forcer), espacements, icône de fenêtre |
 | `interface.rs` | fenêtre : en-tête, trois cartes numérotées (clé, système, compte), barre du bas toujours visible (état, bouton « Fabriquer la clé ») |
 | `travail.rs` | enchaînement : ouverture → écriture → vérification → `config.txt` → relecture |
+| `diagnostic/` | onglet **Diagnostic**, purement informatif, indépendant de la fabrication (voir ci-dessous) |
+| `interface/diagnostic.rs` | affichage de l'onglet Diagnostic (identification, mesures, histogramme, fiches) |
 
 Garde-fous : la clé choisie est **revérifiée** (chemin + n° de série + taille) juste avant l'écriture,
 y compris par l'assistant root ; la confirmation affiche modèle, taille et n° de série.
@@ -106,6 +108,23 @@ y compris par l'assistant root ; la confirmation affiche modèle, taille et n° 
 Tests : `cd app && cargo test` (parcours complet sur fichiers : GPT + FAT32 compressée, bmap,
 écriture, vérification, config.txt). Essai avec une image réelle écrite dans un fichier :
 `FABCLE_IMAGE=x.img.zst FABCLE_BMAP=x.img.bmap FABCLE_CIBLE=cle.bin cargo test -- --ignored`.
+
+### Onglet Diagnostic
+
+Outil didactique : examine une clé sous l'angle de notre usage (un système qui lit et écrit sans cesse
+de petits blocs), sans rien changer au parcours de fabrication. **Étape 1 : rien n'est jamais écrit.**
+
+| Module | Rôle |
+|---|---|
+| `diagnostic/materiel.rs` | `Materiel` : VID:PID, pilote (uas / usb-storage, UASPStor / USBSTOR), norme USB, liaison négociée, TRIM, file de commandes… Table `ressources/diagnostic/fabricants-usb.txt` (marque, contrôleur, pont USB-SSD, suspect) |
+| `disques/linux.rs` `identifier` | sysfs, sans droits : `queue/discard_max_bytes`, `device/queue_depth`, puis remontée jusqu'à l'interface USB (`driver`) et au périphérique (`idVendor`, `version`, `speed`) |
+| `disques/windows.rs` `identifier` | `IOCTL_STORAGE_QUERY_PROPERTY` (TRIM, alignement, adaptateur) ; SetupAPI + CfgMgr : nœud du disque → nœud `USB\VID_…` (service = pilote) → concentrateur : `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX(_V2)` (vitesse, bcdUSB, SuperSpeed possible) |
+| `diagnostic/mesures.rs` | lectures **directes** (`O_DIRECT` / `FILE_FLAG_NO_BUFFERING`, tampons alignés 4096), bornées en durée : séquentielle 4 Mio (8 s), aléatoire 4 Kio une à la fois (8 s), puis 8 à la fois (8 s, un descripteur par fil) ; latences (médiane, 90/99 %, max, histogramme) ; part de blocs vides (lectures optimistes) |
+| `diagnostic/interpretation.rs` | fiches par facette, dans l'ordre d'importance, chacune **lu / mesuré / déduit / non mesuré** ; estimation prudente de la catégorie A–D ; résumé copiable. Seuils indicatifs, à calibrer sur des clés réelles |
+| `diagnostic/textes.rs` | textes explicatifs de `ressources/diagnostic/textes.txt` (`[clé]` et `[clé.pourquoi]`), **modifiables sans toucher au code** ; un test vérifie que chaque clé utilisée existe |
+
+Sous Linux, les mesures passent par l'assistant : `pkexec <app> --diagnostic` (JSON du `Disque` en
+entrée, JSON des `Mesures` dans `FINI`). La clé est revérifiée (liste USB hors système) côté root.
 
 ## 5. CI (`.github/workflows/image.yml`, `app.yml`)
 
