@@ -437,27 +437,23 @@ impl Appli {
 
     /// Liste déroulante des clés et bouton « Actualiser » (partagés par les deux onglets).
     fn choix_disque(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let texte = self
-                .disque
-                .as_ref()
-                .map(|d| d.libelle())
-                .unwrap_or_else(|| {
-                    if self.disques.is_empty() {
-                        "Aucune clé USB détectée — branchez-en une".into()
-                    } else {
-                        "Choisir la clé…".into()
-                    }
-                });
-            let largeur = ui.available_width() - 110.0;
-            egui::ComboBox::from_id_salt("disque")
-                .width(largeur)
-                .selected_text(texte)
-                .show_ui(ui, |ui| {
-                    for d in &self.disques {
-                        ui.selectable_value(&mut self.disque, Some(d.clone()), d.libelle());
-                    }
-                });
+        let texte = self
+            .disque
+            .as_ref()
+            .map(|d| d.libelle())
+            .unwrap_or_else(|| {
+                if self.disques.is_empty() {
+                    "Aucune clé USB détectée — branchez-en une".into()
+                } else {
+                    "Choisir la clé…".into()
+                }
+            });
+        // De droite à gauche : le bouton d'abord, puis la liste dans la place restante. Son
+        // libellé (modèle, taille, n° de série, chemin) peut être plus long que la fenêtre : il est
+        // tronqué, et affiché en entier au survol.
+        let ligne = egui::vec2(ui.available_width(), 30.0);
+        let droite_a_gauche = egui::Layout::right_to_left(egui::Align::Center);
+        ui.allocate_ui_with_layout(ligne, droite_a_gauche, |ui| {
             if ui
                 .add_sized([100.0, 30.0], egui::Button::new("Actualiser"))
                 .on_hover_text("Rechercher de nouveau les clés USB")
@@ -465,6 +461,16 @@ impl Appli {
             {
                 self.detecter();
             }
+            let r = egui::ComboBox::from_id_salt("disque")
+                .width(ui.available_width())
+                .truncate()
+                .selected_text(texte.clone())
+                .show_ui(ui, |ui| {
+                    for d in &self.disques {
+                        ui.selectable_value(&mut self.disque, Some(d.clone()), d.libelle());
+                    }
+                });
+            r.response.on_hover_text(texte);
         });
         if let Some(e) = &self.erreur_disques {
             ui.colored_label(ui.visuals().error_fg_color, e);
@@ -519,6 +525,7 @@ impl Appli {
                             };
                             let r = egui::ComboBox::from_id_salt("version")
                                 .width(ui.available_width())
+                                .truncate()
                                 .selected_text(v.get(self.version).map(texte).unwrap_or_default())
                                 .show_ui(ui, |ui| {
                                     for (i, x) in v.iter().enumerate() {
