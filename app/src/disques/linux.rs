@@ -275,6 +275,26 @@ pub fn ouvrir_lecture(d: &Disque) -> Result<(File, bool), String> {
     }
 }
 
+/// Descripteur supplémentaire en lecture-écriture directe (`O_DIRECT`), pour l'analyse complète.
+/// À n'appeler qu'après [`ouvrir`], qui a revérifié, démonté et réservé la clé (`O_EXCL`) : les
+/// ouvertures sans `O_EXCL` restent permises au même processus.
+pub fn ouvrir_ecriture(d: &Disque) -> Result<(File, bool), String> {
+    let ouvrir = |drapeaux| {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(drapeaux | libc::O_CLOEXEC)
+            .open(&d.chemin)
+    };
+    match ouvrir(libc::O_DIRECT) {
+        Ok(f) => Ok((f, true)),
+        Err(e) if e.raw_os_error() == Some(libc::EINVAL) => ouvrir(0)
+            .map(|f| (f, false))
+            .map_err(|e| format!("ouverture de {} : {e}", d.chemin)),
+        Err(e) => Err(format!("ouverture de {} : {e}", d.chemin)),
+    }
+}
+
 /// Ce que sysfs dit de la clé (lisible sans droits particuliers).
 pub fn identifier(d: &Disque) -> Materiel {
     let mut m = Materiel::default();

@@ -315,15 +315,15 @@ impl Cible for DisqueWindows {
 // Diagnostic : lecture seule et identification du matériel.
 // ————————————————————————————————————————————————————————————————————————————————
 
-/// Ouvre la clé en lecture seule, sans cache système (`FILE_FLAG_NO_BUFFERING`), pour le
-/// diagnostic. Ni verrouillage ni démontage : une clé en service peut être examinée sans risque.
-pub fn ouvrir_lecture(d: &Disque) -> Result<(File, bool), String> {
+/// Ouvre la clé sans cache système (`FILE_FLAG_NO_BUFFERING`), en lecture seule ou en
+/// lecture-écriture.
+fn ouvrir_directe(d: &Disque, acces: u32) -> Result<(File, bool), String> {
     let w = large(&d.chemin);
     // SAFETY : chaîne terminée par un zéro, paramètres valides.
     let h = unsafe {
         CreateFileW(
             w.as_ptr(),
-            GENERIC_READ,
+            acces,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             null(),
             OPEN_EXISTING,
@@ -339,6 +339,18 @@ pub fn ouvrir_lecture(d: &Disque) -> Result<(File, bool), String> {
     }
     // SAFETY : handle valide que nous possédons désormais.
     Ok((unsafe { File::from_raw_handle(h as _) }, true))
+}
+
+/// Lecture seule, pour le diagnostic. Ni verrouillage ni démontage : une clé en service peut être
+/// examinée sans risque.
+pub fn ouvrir_lecture(d: &Disque) -> Result<(File, bool), String> {
+    ouvrir_directe(d, GENERIC_READ)
+}
+
+/// Descripteur supplémentaire en lecture-écriture directe, pour l'analyse complète. À n'appeler
+/// qu'après [`ouvrir`], dont les verrous sur les volumes de la clé autorisent l'écriture.
+pub fn ouvrir_ecriture(d: &Disque) -> Result<(File, bool), String> {
+    ouvrir_directe(d, GENERIC_READ | GENERIC_WRITE)
 }
 
 // Identifiants STORAGE_PROPERTY_ID.

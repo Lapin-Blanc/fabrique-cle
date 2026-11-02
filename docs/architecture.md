@@ -112,7 +112,8 @@ Tests : `cd app && cargo test` (parcours complet sur fichiers : GPT + FAT32 comp
 ### Onglet Diagnostic
 
 Outil didactique : examine une clé sous l'angle de notre usage (un système qui lit et écrit sans cesse
-de petits blocs), sans rien changer au parcours de fabrication. **Étape 1 : rien n'est jamais écrit.**
+de petits blocs), sans rien changer au parcours de fabrication. Les mesures en lecture n'écrivent
+rien ; seule l'**analyse complète** écrit sur la clé, après confirmation (modèle, taille, n° de série).
 
 | Module | Rôle |
 |---|---|
@@ -120,11 +121,15 @@ de petits blocs), sans rien changer au parcours de fabrication. **Étape 1 : rie
 | `disques/linux.rs` `identifier` | sysfs, sans droits : `queue/discard_max_bytes`, `device/queue_depth`, puis remontée jusqu'à l'interface USB (`driver`) et au périphérique (`idVendor`, `version`, `speed`) |
 | `disques/windows.rs` `identifier` | `IOCTL_STORAGE_QUERY_PROPERTY` (TRIM, alignement, adaptateur) ; SetupAPI + CfgMgr : nœud du disque → nœud `USB\VID_…` (service = pilote) → concentrateur : `IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX(_V2)` (vitesse, bcdUSB, SuperSpeed possible) |
 | `diagnostic/mesures.rs` | lectures **directes** (`O_DIRECT` / `FILE_FLAG_NO_BUFFERING`, tampons alignés 4096), bornées en durée : séquentielle 4 Mio (8 s), aléatoire 4 Kio une à la fois (8 s), puis 8 à la fois (8 s, un descripteur par fil) ; latences (médiane, 90/99 %, max, histogramme) ; part de blocs vides (lectures optimistes) |
+| `diagnostic/analyse.rs` | analyse complète (**efface la clé**), ouverte comme pour la fabrication (`disques::ouvrir` : revérification, démontage / verrouillage) puis 8 descripteurs directs (`ouvrir_ecriture`) : 1) capacité réelle : marqueurs sur une grille au pas puissance de deux (un repliement d'adresses de contrefaçon écrase un marqueur déjà écrit), relus ; 2) écriture aléatoire 4 Kio, 1 puis 8 à la fois ; 3) écritures synchronisées (fdatasync / FlushFileBuffers à chaque bloc) ; 4) longue écriture séquentielle (1, 3 ou 10 min) et courbe du débit, chute du cache SLC repérée ; 5) lecture aléatoire sur les données écrites. Puis premier et dernier Mio remis à zéro (clé vide). Testé sur une clé simulée, contrefaçons comprises |
 | `diagnostic/interpretation.rs` | fiches par facette, dans l'ordre d'importance, chacune **lu / mesuré / déduit / non mesuré** ; estimation prudente de la catégorie A–D ; résumé copiable. Seuils indicatifs, à calibrer sur des clés réelles |
 | `diagnostic/textes.rs` | textes explicatifs de `ressources/diagnostic/textes.txt` (`[clé]` et `[clé.pourquoi]`), **modifiables sans toucher au code** ; un test vérifie que chaque clé utilisée existe |
 
 Sous Linux, les mesures passent par l'assistant : `pkexec <app> --diagnostic` (JSON du `Disque` en
-entrée, JSON des `Mesures` dans `FINI`). La clé est revérifiée (liste USB hors système) côté root.
+entrée, JSON des `Mesures` dans `FINI`) et `pkexec <app> --analyse` (disque + réglages, JSON de
+l'`Analyse`). La clé est revérifiée (liste USB hors système) côté root. Sans pkexec (paquet séparé
+sous Debian, absent du système Fabrique-Clé), l'application se rabat sur `run0` (systemd ≥ 256,
+polkit), sinon demande d'installer pkexec.
 
 ## 5. CI (`.github/workflows/image.yml`, `app.yml`)
 

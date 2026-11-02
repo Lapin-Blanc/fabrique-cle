@@ -24,6 +24,7 @@ fn main() -> eframe::Result {
     match std::env::args().nth(1).as_deref() {
         Some(assistant::OPTION) => std::process::exit(assistant::servir()),
         Some(assistant::OPTION_DIAGNOSTIC) => std::process::exit(assistant::servir_diagnostic()),
+        Some(assistant::OPTION_ANALYSE) => std::process::exit(assistant::servir_analyse()),
         _ => {}
     }
 

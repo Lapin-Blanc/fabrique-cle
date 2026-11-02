@@ -2,6 +2,7 @@
 //! (clé, image, personnalisation, état, bouton).
 
 use crate::config::{CLAVIERS, LANGUES, MOT_DE_PASSE_MIN, Personnalisation};
+use crate::diagnostic::analyse::{Analyse, Reglages};
 use crate::diagnostic::materiel::Materiel;
 use crate::diagnostic::mesures::{self, Mesures};
 use crate::disques::{self, Disque};
@@ -24,6 +25,8 @@ enum Evenement {
     Fin(Result<String, String>),
     /// Fin des mesures du diagnostic.
     Mesures(Result<Box<Mesures>, String>),
+    /// Fin de l'analyse complète.
+    Analyse(Result<Box<Analyse>, String>),
 }
 
 /// Suivi relié à la fenêtre par un canal.
@@ -59,6 +62,8 @@ enum Nature {
     Fabrication,
     /// Mesures en lecture de cette clé.
     Diagnostic(Disque),
+    /// Analyse complète (destructive) de cette clé.
+    Analyse(Disque),
 }
 
 struct Travail {
@@ -88,6 +93,10 @@ struct EtatDiagnostic {
     /// Identification de la clé affichée (relue quand la sélection change).
     materiel: Option<(Disque, Materiel)>,
     mesures: Vec<(Disque, Mesures)>,
+    analyses: Vec<(Disque, Analyse)>,
+    reglages: Reglages,
+    /// Fenêtre de confirmation de l'analyse complète ouverte.
+    confirmer_analyse: bool,
     erreur: Option<String>,
 }
 
@@ -300,6 +309,7 @@ impl Appli {
     fn recevoir(&mut self) {
         let mut fin = None;
         let mut mesures = None;
+        let mut analyse = None;
         if let Some(t) = &mut self.travail {
             while let Ok(ev) = t.rx.try_recv() {
                 match ev {
@@ -314,6 +324,7 @@ impl Appli {
                     }
                     Evenement::Fin(r) => fin = Some(r),
                     Evenement::Mesures(r) => mesures = Some(r),
+                    Evenement::Analyse(r) => analyse = Some(r),
                 }
             }
         }
@@ -331,6 +342,24 @@ impl Appli {
                     Err(e) => self.diag.erreur = Some(e),
                 }
             }
+            return;
+        }
+        if let Some(r) = analyse {
+            if let Some(Travail {
+                nature: Nature::Analyse(d),
+                ..
+            }) = self.travail.take()
+            {
+                match r {
+                    Ok(a) => {
+                        self.diag.analyses.retain(|(x, _)| *x != d);
+                        self.diag.analyses.push((d, *a));
+                    }
+                    Err(e) => self.diag.erreur = Some(e),
+                }
+            }
+            // La table de partitions a changé : relire la liste des clés.
+            self.detecter();
             return;
         }
         if let Some(r) = fin {
@@ -659,7 +688,8 @@ impl Appli {
                 None => {
                     ui.label(
                         egui::RichText::new(
-                            "Mesures en lecture seule : rien n'est écrit sur la clé.",
+                            "Mesures en lecture seule : rien n'est écrit sur la clé. \
+                             Seule l'analyse complète (carte 4) l'efface.",
                         )
                         .weak(),
                     );
@@ -855,6 +885,9 @@ impl eframe::App for Appli {
             });
         if self.confirmation {
             self.ui_confirmation(&ctx);
+        }
+        if self.diag.confirmer_analyse {
+            self.ui_confirmation_analyse(&ctx);
         }
     }
 

@@ -3,15 +3,17 @@
 //! `pkexec <application> --assistant` (fenêtre d'authentification du bureau). Sans pkexec (paquet
 //! séparé sous Debian, souvent absent), `run0` de systemd (≥ 256), qui passe aussi par polkit.
 //!
-//! Deux usages : `--assistant` (écrire une clé) et `--diagnostic` (mesures en lecture seule de
-//! l'onglet Diagnostic, qui exigent aussi root pour lire le périphérique brut).
+//! Trois usages : `--assistant` (écrire une clé), `--diagnostic` (mesures en lecture seule de
+//! l'onglet Diagnostic, qui exigent aussi root pour lire le périphérique brut) et `--analyse`
+//! (analyse complète, qui efface la clé).
 //!
 //! Protocole (une ligne par message, champs séparés par des tabulations) :
-//! - entrée : une ligne JSON ([`Ecriture`] ou [`Disque`]), puis l'entrée reste ouverte ;
+//! - entrée : une ligne JSON ([`Ecriture`], [`Disque`] ou demande d'analyse), puis l'entrée reste ouverte ;
 //!   sa fermeture = annulation ;
 //! - sortie : `ETAPE\ttexte`, `PROGRES\tfraction\tdétail`, `FINI\tmessage`, `ERREUR\tmessage`
-//!   (pour le diagnostic, le message de `FINI` est le JSON des mesures).
+//!   (pour le diagnostic et l'analyse, le message de `FINI` est le JSON des résultats).
 
+use crate::diagnostic::analyse::{Analyse, Reglages, analyser_disque};
 use crate::diagnostic::mesures::{Mesures, mesurer_disque};
 use crate::disques::Disque;
 use crate::suivi::Suivi;
@@ -24,6 +26,14 @@ use std::time::{Duration, Instant};
 
 pub const OPTION: &str = "--assistant";
 pub const OPTION_DIAGNOSTIC: &str = "--diagnostic";
+pub const OPTION_ANALYSE: &str = "--analyse";
+
+/// Demande d'analyse complète transmise à l'assistant.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DemandeAnalyse {
+    disque: Disque,
+    reglages: Reglages,
+}
 
 fn une_ligne(s: &str) -> String {
     s.replace(['\n', '\r', '\t'], " ")
@@ -49,6 +59,17 @@ fn elevateur() -> Option<&'static str> {
     ["pkexec", "run0"]
         .into_iter()
         .find(|p| std::env::split_paths(&chemins).any(|d| d.join(p).is_file()))
+}
+
+/// Côté interface : analyse complète par l'assistant (**efface la clé**).
+pub fn analyser(d: &Disque, reglages: Reglages, suivi: &dyn Suivi) -> Result<Analyse, String> {
+    let demande = DemandeAnalyse {
+        disque: d.clone(),
+        reglages,
+    };
+    let json = serde_json::to_string(&demande).map_err(|x| x.to_string())?;
+    let r = executer(OPTION_ANALYSE, &json, suivi)?;
+    serde_json::from_str(&r).map_err(|x| format!("réponse de l'assistant illisible : {x}"))
 }
 
 /// Lance l'assistant avec `option` et la demande `json`, et relaie ses messages au suivi.
@@ -217,6 +238,19 @@ pub fn servir_diagnostic() -> i32 {
     // `mesurer_disque` revérifie que le disque est bien une clé USB branchée, hors système.
     repondre(
         mesurer_disque(&d, &suivi)
+            .and_then(|m| serde_json::to_string(&m).map_err(|x| x.to_string())),
+    )
+}
+
+/// Côté root : point d'entrée de `--analyse` (**efface la clé**).
+pub fn servir_analyse() -> i32 {
+    let (a, suivi) = match demande::<DemandeAnalyse>() {
+        Ok(x) => x,
+        Err(code) => return code,
+    };
+    // `analyser_disque` passe par `disques::ouvrir` : mêmes vérifications que pour l'écriture.
+    repondre(
+        analyser_disque(&a.disque, a.reglages, &suivi)
             .and_then(|m| serde_json::to_string(&m).map_err(|x| x.to_string())),
     )
 }

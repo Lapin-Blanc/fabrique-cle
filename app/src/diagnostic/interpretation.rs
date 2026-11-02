@@ -2,6 +2,7 @@
 //! dans l'ordre d'importance pour un système sur clé, chacune avec son niveau de certitude.
 //! Les seuils sont indicatifs : à recalibrer sur des clés de référence.
 
+use super::analyse::Analyse;
 use super::materiel::{Materiel, Protocole, Role, fabricant, nom_vitesse};
 use super::mesures::{EN_PARALLELE, Mesures};
 use crate::disques::Disque;
@@ -50,8 +51,10 @@ pub struct Fiche {
 
 /// Toutes les clés de textes que peuvent produire les fiches (vérifié par un test).
 #[cfg(test)]
-pub const CLES: [&str; 13] = [
+pub const CLES: [&str; 15] = [
     "controleur",
+    "ecriture_aleatoire",
+    "ecriture_synchro",
     "protocole",
     "parallelisme",
     "lecture_aleatoire",
@@ -72,8 +75,10 @@ pub fn duree_us(us: u32) -> String {
         format!("{us} µs")
     } else if us < 10_000 {
         format!("{:.1} ms", us as f64 / 1000.0).replace('.', ",")
-    } else {
+    } else if us < 1_000_000 {
         format!("{} ms", us / 1000)
+    } else {
+        format!("{:.1} s", us as f64 / 1e6).replace('.', ",")
     }
 }
 
@@ -124,7 +129,7 @@ fn en_attente(cle: &'static str, titre: &'static str) -> Fiche {
     )
 }
 
-fn controleur(m: &Materiel, mes: Option<&Mesures>) -> Fiche {
+fn controleur(m: &Materiel, mes: Option<&Mesures>, an: Option<&Analyse>) -> Fiche {
     use Appreciation::*;
     let fab = m.vid.and_then(fabricant);
     let mut commentaire = match (m.vid, m.pid, fab) {
@@ -158,6 +163,30 @@ fn controleur(m: &Materiel, mes: Option<&Mesures>) -> Fiche {
     let pour: Vec<&str> = indices.iter().filter(|i| i.0).map(|i| i.1).collect();
     if !pour.is_empty() {
         commentaire += &format!(" Indices de contrôleur de SSD : {}.", pour.join(", "));
+    }
+    // Mesures d'écriture disponibles : elles priment sur les indices, car c'est sur l'écriture
+    // aléatoire que les contrôleurs se distinguent vraiment.
+    if let Some(a) = an {
+        let w = ecriture_4k(a);
+        let (valeur, appr) = if w >= 10.0 {
+            ("se comporte comme un contrôleur de SSD", Bon)
+        } else if w >= 2.0 {
+            (
+                "intermédiaire, meilleur qu'un contrôleur de clé ordinaire",
+                Moyen,
+            )
+        } else {
+            ("se comporte comme un contrôleur de clé ordinaire", Faible)
+        };
+        commentaire += &format!(" Écriture aléatoire 4 Ko mesurée : {} Mo/s.", dec(w));
+        return fiche(
+            "controleur",
+            "Contrôleur",
+            valeur,
+            Certitude::Deduit,
+            appr,
+            commentaire,
+        );
     }
     let (valeur, appr) = match fab.map(|f| f.role) {
         Some(Role::Pont) => ("probablement un SSD derrière un pont USB", Bon),
@@ -385,20 +414,226 @@ fn non_mesure(cle: &'static str, titre: &'static str) -> Fiche {
     fiche(
         cle,
         titre,
-        "demande l'analyse complète (à venir)",
+        "demande l'analyse complète (efface la clé)",
         Certitude::NonMesure,
         Appreciation::Neutre,
         "",
     )
 }
 
+/// Meilleur débit d'écriture aléatoire 4 Ko (une à la fois ou plusieurs à la fois), en Mo/s.
+fn ecriture_4k(a: &Analyse) -> f64 {
+    a.ecriture_1.mo_s.max(a.ecriture_n.mo_s)
+}
+
+fn ecriture_aleatoire(a: &Analyse) -> Fiche {
+    let w = ecriture_4k(a);
+    let appr = if w >= 10.0 {
+        Appreciation::Bon
+    } else if w >= 0.5 {
+        Appreciation::Moyen
+    } else {
+        Appreciation::Faible
+    };
+    fiche(
+        "ecriture_aleatoire",
+        "Écriture aléatoire 4 Ko",
+        format!(
+            "{} écritures/s ({} Mo/s)",
+            dec(a.ecriture_1.iops.max(a.ecriture_n.iops)),
+            dec(w)
+        ),
+        Certitude::Mesure,
+        appr,
+        format!(
+            "Une à la fois : {} écritures/s ; {EN_PARALLELE} à la fois : {} écritures/s. \
+             Écriture la plus lente : {}.",
+            dec(a.ecriture_1.iops),
+            dec(a.ecriture_n.iops),
+            duree_us(
+                a.ecriture_1
+                    .latences
+                    .max_us
+                    .max(a.ecriture_n.latences.max_us)
+            )
+        ),
+    )
+}
+
+fn ecriture_synchro(a: &Analyse) -> Fiche {
+    let l = &a.synchro.latences;
+    let appr = if l.mediane_us <= 1_000 {
+        Appreciation::Bon
+    } else if l.mediane_us <= 5_000 {
+        Appreciation::Moyen
+    } else {
+        Appreciation::Faible
+    };
+    fiche(
+        "ecriture_synchro",
+        "Écritures synchronisées",
+        format!(
+            "médiane {}, 99 % sous {}",
+            duree_us(l.mediane_us),
+            duree_us(l.p99_us)
+        ),
+        Certitude::Mesure,
+        appr,
+        format!(
+            "{} écritures synchronisées par seconde ; la plus lente : {}.",
+            dec(a.synchro.iops),
+            duree_us(l.max_us)
+        ),
+    )
+}
+
+fn capacite(a: &Analyse, taille: u64) -> Fiche {
+    let c = &a.capacite;
+    if c.conforme() {
+        fiche(
+            "capacite",
+            "Capacité réelle",
+            format!("conforme : {} marqueurs relus intacts", c.marqueurs),
+            Certitude::Mesure,
+            Appreciation::Bon,
+            "Contrôle par échantillon : il détecte les contrefaçons courantes, pas un défaut isolé.",
+        )
+    } else {
+        let mut commentaire = format!(
+            "{} marqueurs sur {} relus intacts.",
+            c.corrects, c.marqueurs
+        );
+        if c.repliement {
+            commentaire += " Des marqueurs en ont écrasé d'autres : la clé replie ses adresses, \
+                             c'est une contrefaçon.";
+        }
+        if c.erreurs > 0 {
+            commentaire += &format!(" {} erreurs de lecture ou d'écriture.", c.erreurs);
+        }
+        commentaire += " À ne pas utiliser : les données écrites au-delà seraient perdues.";
+        fiche(
+            "capacite",
+            "Capacité réelle",
+            format!(
+                "NON CONFORME : seuls {} fiables sur {} annoncés",
+                taille_lisible(c.fiable),
+                taille_lisible(taille)
+            ),
+            Certitude::Mesure,
+            Appreciation::Faible,
+            commentaire,
+        )
+    }
+}
+
+/// Débit d'écriture soutenu : après la chute du cache, ou moyen faute de chute.
+fn debit_soutenu(a: &Analyse) -> f64 {
+    if a.longue.chute_apres.is_some() {
+        a.longue.debit_fin
+    } else {
+        a.longue.mo_s
+    }
+}
+
+fn appr_soutenu(v: f64) -> Appreciation {
+    if v >= 60.0 {
+        Appreciation::Bon
+    } else if v >= 20.0 {
+        Appreciation::Moyen
+    } else {
+        Appreciation::Faible
+    }
+}
+
+fn cache_slc(a: &Analyse) -> Fiche {
+    let l = &a.longue;
+    match l.chute_apres {
+        Some(b) => fiche(
+            "cache_slc",
+            "Cache SLC et débit soutenu",
+            format!(
+                "≈ {} à {} Mo/s, puis {} Mo/s",
+                taille_lisible(b),
+                dec(l.debit_debut),
+                dec(l.debit_fin)
+            ),
+            Certitude::Mesure,
+            appr_soutenu(l.debit_fin),
+            format!(
+                "{} écrits en {} s ({} Mo/s en moyenne).",
+                taille_lisible(l.octets),
+                dec(l.duree_s),
+                dec(l.mo_s)
+            ),
+        ),
+        None => fiche(
+            "cache_slc",
+            "Cache SLC et débit soutenu",
+            format!("pas de chute sur {} écrits", taille_lisible(l.octets)),
+            Certitude::Mesure,
+            appr_soutenu(l.mo_s),
+            format!(
+                "{} Mo/s en moyenne (début {}, fin {}). Le cache est plus grand que ce qui a été \
+                 écrit, ou la clé n'en a pas : une écriture plus longue le dirait.",
+                dec(l.mo_s),
+                dec(l.debit_debut),
+                dec(l.debit_fin)
+            ),
+        ),
+    }
+}
+
+fn memoire(a: &Analyse) -> Fiche {
+    let v = debit_soutenu(a);
+    let valeur = if v >= 100.0 {
+        "écriture soutenue rapide : mémoire de SSD (TLC ou meilleure)"
+    } else if v >= 30.0 {
+        "probablement TLC"
+    } else {
+        "lente une fois le cache plein : probablement QLC, ou TLC derrière un contrôleur simple"
+    };
+    fiche(
+        "memoire",
+        "Type de mémoire flash",
+        valeur,
+        Certitude::Deduit,
+        appr_soutenu(v),
+        format!("Déduit du débit soutenu : {} Mo/s.", dec(v)),
+    )
+}
+
 /// Les fiches, dans l'ordre d'importance pour un système sur clé.
-pub fn fiches(m: &Materiel, mes: Option<&Mesures>) -> Vec<Fiche> {
-    let mut f = vec![controleur(m, mes), protocole(m)];
+pub fn fiches(
+    m: &Materiel,
+    taille: u64,
+    mes: Option<&Mesures>,
+    an: Option<&Analyse>,
+) -> Vec<Fiche> {
+    let mut f = vec![controleur(m, mes, an)];
+    match an {
+        Some(a) => {
+            f.push(ecriture_aleatoire(a));
+            f.push(ecriture_synchro(a));
+            f.push(capacite(a, taille));
+        }
+        None => {
+            f.push(non_mesure("ecriture_aleatoire", "Écriture aléatoire 4 Ko"));
+            f.push(non_mesure("ecriture_synchro", "Écritures synchronisées"));
+            f.push(non_mesure("capacite", "Capacité réelle"));
+        }
+    }
+    f.push(protocole(m));
     match mes {
         Some(x) => {
             f.push(parallelisme(x));
-            f.push(lecture_aleatoire(x));
+            let mut l = lecture_aleatoire(x);
+            if let Some(a) = an {
+                l.commentaire += &format!(
+                    " Sur des données réellement écrites (analyse complète) : {} lectures/s.",
+                    dec(a.lecture_donnees.iops)
+                );
+            }
+            f.push(l);
             f.push(latence(x));
         }
         None => {
@@ -409,6 +644,16 @@ pub fn fiches(m: &Materiel, mes: Option<&Mesures>) -> Vec<Fiche> {
     }
     f.push(trim(m));
     f.push(liaison(m, mes));
+    match an {
+        Some(a) => {
+            f.push(cache_slc(a));
+            f.push(memoire(a));
+        }
+        None => {
+            f.push(non_mesure("cache_slc", "Cache SLC et débit soutenu"));
+            f.push(non_mesure("memoire", "Type de mémoire flash"));
+        }
+    }
     f.push(match mes {
         Some(x) => sequentielle(x),
         None => en_attente("sequentielle", "Lecture séquentielle"),
@@ -429,9 +674,6 @@ pub fn fiches(m: &Materiel, mes: Option<&Mesures>) -> Vec<Fiche> {
             ));
         }
     }
-    f.push(non_mesure("cache_slc", "Cache SLC et débit soutenu"));
-    f.push(non_mesure("memoire", "Type de mémoire flash"));
-    f.push(non_mesure("capacite", "Capacité réelle"));
     f.push(fiche(
         "endurance",
         "Endurance",
@@ -443,41 +685,88 @@ pub fn fiches(m: &Materiel, mes: Option<&Mesures>) -> Vec<Fiche> {
     f
 }
 
-/// Estimation de la catégorie (A à D, voir le texte « categories »), forcément prudente :
-/// la frontière se joue sur l'écriture, que ce diagnostic ne mesure pas.
-pub fn estimation(m: &Materiel, mes: Option<&Mesures>) -> (String, Appreciation) {
-    let uas = m.protocole() == Some(Protocole::Uas);
-    let bot = m.protocole() == Some(Protocole::Bot);
-    let trim = m.trim == Some(true);
-    let parallele = mes.map(gain_parallele);
-    let pont = m
-        .vid
-        .and_then(fabricant)
-        .is_some_and(|f| f.role == Role::Pont);
-    let (texte, appr) = if pont || (uas && trim && parallele.is_none_or(|g| g >= 1.8)) {
-        (
-            "Plutôt catégorie C ou D : contrôleur de type SSD. Un bon choix pour un système.",
-            Appreciation::Bon,
-        )
-    } else if uas {
-        (
-            "Entre B et C : la clé a l'UAS, mais pas tous les signes d'un contrôleur de SSD.",
-            Appreciation::Moyen,
-        )
-    } else if bot || parallele.is_some_and(|g| g < 1.2) {
-        (
-            "Plutôt catégorie A ou B : clé ordinaire. Le système fonctionnera grâce aux réglages \
-             de l'image, mais restera lent en écriture.",
-            Appreciation::Faible,
-        )
+/// Catégorie (A à D, voir le texte « categories »). Mesurée si l'analyse complète a eu lieu
+/// (écriture aléatoire), sinon estimée prudemment à partir des indices en lecture.
+pub fn estimation(
+    m: &Materiel,
+    mes: Option<&Mesures>,
+    an: Option<&Analyse>,
+) -> (String, Appreciation) {
+    let mut texte = String::new();
+    let appr;
+    if let Some(a) = an {
+        let w = ecriture_4k(a);
+        let (t, ap) = if !a.capacite.conforme() {
+            (
+                "Clé contrefaite ou défectueuse : sa capacité réelle ne correspond pas à \
+                 l'annonce. À ne pas utiliser.",
+                Appreciation::Faible,
+            )
+        } else if w < 0.1 {
+            (
+                "Catégorie A : clé basique. Inutilisable pour un système.",
+                Appreciation::Faible,
+            )
+        } else if w < 2.0 {
+            (
+                "Catégorie B : clé « rapide » grand public. Le système fonctionnera grâce aux \
+                 réglages de l'image, mais le bureau pourra se figer pendant les écritures.",
+                Appreciation::Moyen,
+            )
+        } else if w < 10.0 {
+            (
+                "Entre les catégories B et C : nettement meilleure qu'une clé ordinaire.",
+                Appreciation::Moyen,
+            )
+        } else if w < 30.0 {
+            (
+                "Catégorie C : contrôleur de type SSD. Un bon choix pour un système.",
+                Appreciation::Bon,
+            )
+        } else {
+            (
+                "Catégorie D : performances de SSD. Excellent pour un système.",
+                Appreciation::Bon,
+            )
+        };
+        texte += t;
+        texte += &format!(" (Écriture aléatoire 4 Ko mesurée : {} Mo/s.)", dec(w));
+        appr = ap;
     } else {
-        (
-            "Indéterminée : pas assez d'informations.",
-            Appreciation::Neutre,
-        )
-    };
-    let mut texte = texte.to_string();
-    texte += " Estimation à confirmer par l'analyse complète, qui mesure l'écriture.";
+        let uas = m.protocole() == Some(Protocole::Uas);
+        let bot = m.protocole() == Some(Protocole::Bot);
+        let trim = m.trim == Some(true);
+        let parallele = mes.map(gain_parallele);
+        let pont = m
+            .vid
+            .and_then(fabricant)
+            .is_some_and(|f| f.role == Role::Pont);
+        let (t, ap) = if pont || (uas && trim && parallele.is_none_or(|g| g >= 1.8)) {
+            (
+                "Plutôt catégorie C ou D : contrôleur de type SSD. Un bon choix pour un système.",
+                Appreciation::Bon,
+            )
+        } else if uas {
+            (
+                "Entre B et C : la clé a l'UAS, mais pas tous les signes d'un contrôleur de SSD.",
+                Appreciation::Moyen,
+            )
+        } else if bot || parallele.is_some_and(|g| g < 1.2) {
+            (
+                "Plutôt catégorie A ou B : clé ordinaire. Le système fonctionnera grâce aux \
+                 réglages de l'image, mais restera lent en écriture.",
+                Appreciation::Faible,
+            )
+        } else {
+            (
+                "Indéterminée : pas assez d'informations.",
+                Appreciation::Neutre,
+            )
+        };
+        texte += t;
+        texte += " Estimation à confirmer par l'analyse complète, qui mesure l'écriture.";
+        appr = ap;
+    }
     if m.bridee_en_usb2() {
         texte += " Attention : la liaison actuelle est en USB 2.";
     }
@@ -485,14 +774,14 @@ pub fn estimation(m: &Materiel, mes: Option<&Mesures>) -> (String, Appreciation)
 }
 
 /// Résumé en texte brut, à copier (comparaison de modèles, support).
-pub fn resume(d: &Disque, m: &Materiel, mes: Option<&Mesures>) -> String {
+pub fn resume(d: &Disque, m: &Materiel, mes: Option<&Mesures>, an: Option<&Analyse>) -> String {
     let mut s = format!("Diagnostic Fabrique-Clé ({})\n", env!("VERSION_APPLI"));
     s += &format!("Clé : {}\n", d.libelle());
     if !m.fabricant_usb.is_empty() || !m.produit_usb.is_empty() {
         s += &format!("Descripteur USB : {} {}\n", m.fabricant_usb, m.produit_usb);
     }
-    s += &format!("Estimation : {}\n\n", estimation(m, mes).0);
-    for f in fiches(m, mes) {
+    s += &format!("Catégorie : {}\n\n", estimation(m, mes, an).0);
+    for f in fiches(m, d.taille, mes, an) {
         s += &format!("- {} : {} [{}]", f.titre, f.valeur, f.certitude.nom());
         if !f.commentaire.is_empty() {
             s += &format!(" — {}", f.commentaire);
@@ -503,6 +792,17 @@ pub fn resume(d: &Disque, m: &Materiel, mes: Option<&Mesures>) -> String {
         && !x.directes
     {
         s += "\nAttention : lectures passées par le cache du système, mesures peu fiables.\n";
+    }
+    if let Some(a) = an {
+        if !a.directes {
+            s += "\nAttention : écritures passées par le cache du système, mesures peu fiables.\n";
+        }
+        if !a.longue.points.is_empty() {
+            s += "\nÉcriture longue (Go écrits ; Mo/s) :\n";
+            for p in a.longue.points.iter().step_by(4) {
+                s += &format!("{:.2} ; {:.0}\n", p[0], p[1]);
+            }
+        }
     }
     s
 }
@@ -550,13 +850,13 @@ mod tests {
             ..Default::default()
         };
         let x = mesures(2000.0, 2050.0, 3000);
-        let f = fiches(&m, Some(&x));
+        let f = fiches(&m, 32_000_000_000, Some(&x), None);
         let par = |c: &str| f.iter().find(|f| f.cle == c).unwrap();
         assert_eq!(par("controleur").appreciation, Appreciation::Faible);
         assert_eq!(par("protocole").appreciation, Appreciation::Faible);
         assert_eq!(par("parallelisme").appreciation, Appreciation::Faible);
         assert_eq!(par("liaison").appreciation, Appreciation::Bon);
-        assert_eq!(estimation(&m, Some(&x)).1, Appreciation::Faible);
+        assert_eq!(estimation(&m, Some(&x), None).1, Appreciation::Faible);
         // Chaque fiche renvoie à un texte connu.
         assert!(f.iter().all(|f| CLES.contains(&f.cle)));
     }
@@ -571,18 +871,67 @@ mod tests {
             ..Default::default()
         };
         let x = mesures(4000.0, 16000.0, 900);
-        assert_eq!(estimation(&m, Some(&x)).1, Appreciation::Bon);
-        let f = fiches(&m, Some(&x));
-        assert_eq!(f[0].appreciation, Appreciation::Bon);
-        assert_eq!(f[2].appreciation, Appreciation::Bon);
+        assert_eq!(estimation(&m, Some(&x), None).1, Appreciation::Bon);
+        let f = fiches(&m, 32_000_000_000, Some(&x), None);
+        let par = |c: &str| f.iter().find(|f| f.cle == c).unwrap();
+        assert_eq!(par("controleur").appreciation, Appreciation::Bon);
+        assert_eq!(par("parallelisme").appreciation, Appreciation::Bon);
+    }
+
+    fn analyse(ecriture_iops: f64, synchro_us: u32, conforme: bool) -> Analyse {
+        let x = mesures(ecriture_iops, ecriture_iops, synchro_us);
+        let mut a = Analyse {
+            directes: true,
+            ecriture_1: x.aleatoire_1.clone(),
+            ecriture_n: x.aleatoire_n.clone(),
+            synchro: x.aleatoire_1.clone(),
+            lecture_donnees: x.aleatoire_1,
+            ..Default::default()
+        };
+        a.synchro.latences.mediane_us = synchro_us;
+        a.capacite.marqueurs = 300;
+        a.capacite.corrects = if conforme { 300 } else { 40 };
+        a.capacite.repliement = !conforme;
+        a.longue.octets = 3_000_000_000;
+        a.longue.mo_s = 25.0;
+        a.longue.chute_apres = Some(1_000_000_000);
+        a.longue.debit_debut = 80.0;
+        a.longue.debit_fin = 12.0;
+        a
+    }
+
+    #[test]
+    fn classement_par_l_analyse_complete() {
+        let m = Materiel::default();
+        // Clé ordinaire : ~100 écritures 4 Ko par seconde (0,4 Mo/s), 10 ms par écriture sûre.
+        let a = analyse(100.0, 10_000, true);
+        let (t, appr) = estimation(&m, None, Some(&a));
+        assert!(t.starts_with("Catégorie B"), "{t}");
+        assert_eq!(appr, Appreciation::Moyen);
+        let f = fiches(&m, 32_000_000_000, None, Some(&a));
+        let par = |c: &str| f.iter().find(|f| f.cle == c).unwrap().clone();
+        assert_eq!(par("ecriture_synchro").appreciation, Appreciation::Faible);
+        assert_eq!(par("capacite").appreciation, Appreciation::Bon);
+        assert_eq!(par("memoire").appreciation, Appreciation::Faible);
+        assert!(par("cache_slc").valeur.contains("puis 12"));
+        // SSD : 10 000 écritures par seconde (41 Mo/s).
+        let a = analyse(10_000.0, 300, true);
+        assert!(estimation(&m, None, Some(&a)).0.starts_with("Catégorie D"));
+        // Contrefaçon : quoi qu'il en soit des débits.
+        let a = analyse(10_000.0, 300, false);
+        let (t, appr) = estimation(&m, None, Some(&a));
+        assert!(t.starts_with("Clé contrefaite"), "{t}");
+        assert_eq!(appr, Appreciation::Faible);
+        let f = fiches(&m, 64_000_000_000, None, Some(&a));
+        assert!(f.iter().all(|f| CLES.contains(&f.cle)));
     }
 
     #[test]
     fn sans_mesures_ni_informations() {
         let m = Materiel::default();
-        let f = fiches(&m, None);
+        let f = fiches(&m, 32_000_000_000, None, None);
         assert!(f.iter().any(|f| f.valeur == "pas encore mesuré"));
-        assert_eq!(estimation(&m, None).1, Appreciation::Neutre);
+        assert_eq!(estimation(&m, None, None).1, Appreciation::Neutre);
     }
 
     #[test]
@@ -590,5 +939,6 @@ mod tests {
         assert_eq!(duree_us(250), "250 µs");
         assert_eq!(duree_us(2500), "2,5 ms");
         assert_eq!(duree_us(25_000), "25 ms");
+        assert_eq!(duree_us(2_598_000), "2,6 s");
     }
 }

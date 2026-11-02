@@ -154,32 +154,79 @@ impl Drop for TamponAligne {
     }
 }
 
-/// Lecture complète à une position donnée, sans déplacer de curseur partagé.
-fn lire_a(f: &File, buf: &mut [u8], pos: u64) -> io::Result<()> {
-    let mut lu = 0;
-    while lu < buf.len() {
-        #[cfg(unix)]
-        let n = std::os::unix::fs::FileExt::read_at(f, &mut buf[lu..], pos + lu as u64)?;
-        #[cfg(windows)]
-        let n = std::os::windows::fs::FileExt::seek_read(f, &mut buf[lu..], pos + lu as u64)?;
-        if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "fin du disque",
-            ));
+/// Support mesuré : accès par position, partageable entre fils d'exécution (un descripteur par
+/// fil). Implémenté par `File` ; les tests y ajoutent une clé contrefaite simulée.
+pub trait Support: Sync {
+    fn lire_a(&self, buf: &mut [u8], pos: u64) -> io::Result<()>;
+    fn ecrire_a(&self, buf: &[u8], pos: u64) -> io::Result<()>;
+    /// Vider les tampons de la clé jusqu'à la mémoire flash (fdatasync, FlushFileBuffers).
+    fn synchroniser(&self) -> io::Result<()>;
+}
+
+impl Support for File {
+    /// Lecture complète à une position donnée, sans déplacer de curseur partagé.
+    fn lire_a(&self, buf: &mut [u8], pos: u64) -> io::Result<()> {
+        let mut lu = 0;
+        while lu < buf.len() {
+            #[cfg(unix)]
+            let n = std::os::unix::fs::FileExt::read_at(self, &mut buf[lu..], pos + lu as u64)?;
+            #[cfg(windows)]
+            let n =
+                std::os::windows::fs::FileExt::seek_read(self, &mut buf[lu..], pos + lu as u64)?;
+            if n == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "fin du disque",
+                ));
+            }
+            lu += n;
         }
-        lu += n;
+        Ok(())
     }
-    Ok(())
+    fn ecrire_a(&self, buf: &[u8], pos: u64) -> io::Result<()> {
+        let mut ecrit = 0;
+        while ecrit < buf.len() {
+            #[cfg(unix)]
+            let n = std::os::unix::fs::FileExt::write_at(self, &buf[ecrit..], pos + ecrit as u64)?;
+            #[cfg(windows)]
+            let n =
+                std::os::windows::fs::FileExt::seek_write(self, &buf[ecrit..], pos + ecrit as u64)?;
+            if n == 0 {
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "écriture refusée"));
+            }
+            ecrit += n;
+        }
+        Ok(())
+    }
+    fn synchroniser(&self) -> io::Result<()> {
+        self.sync_data()
+    }
+}
+
+/// Nature des opérations d'un test aléatoire.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Mode {
+    Lecture,
+    Ecriture,
+    /// Chaque écriture est suivie d'une synchronisation, comme le font un journal ou une base de
+    /// données (fsync) : on mesure le temps jusqu'à ce que la donnée soit réellement en sécurité.
+    EcritureSynchro,
 }
 
 /// Générateur pseudo-aléatoire minimal (xorshift64*) : suffisant pour tirer des positions.
-struct Hasard(u64);
+pub(crate) struct Hasard(u64);
 impl Hasard {
-    fn new(graine: u64) -> Self {
+    pub(crate) fn new(graine: u64) -> Self {
         Self(graine | 1)
     }
-    fn suivant(&mut self) -> u64 {
+    /// Remplit un tampon d'octets pseudo-aléatoires (données incompressibles).
+    pub(crate) fn remplir(&mut self, buf: &mut [u8]) {
+        for c in buf.chunks_mut(8) {
+            let v = self.suivant().to_le_bytes();
+            c.copy_from_slice(&v[..c.len()]);
+        }
+    }
+    pub(crate) fn suivant(&mut self) -> u64 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
@@ -187,7 +234,7 @@ impl Hasard {
     }
 }
 
-fn graine() -> u64 {
+pub(crate) fn graine() -> u64 {
     let mut b = [0u8; 8];
     if getrandom::fill(&mut b).is_err() {
         let t = std::time::SystemTime::now()
@@ -208,7 +255,7 @@ fn ms_lisible(us: u32) -> String {
 
 /// Lit le début de la clé par blocs de 4 Mio, pendant `duree` au plus.
 fn sequentielle(
-    f: &File,
+    f: &impl Support,
     taille: u64,
     duree: Duration,
     suivi: &dyn Suivi,
@@ -220,7 +267,8 @@ fn sequentielle(
     let (mut tranche, mut octets_tranche) = (Instant::now(), 0u64);
     while debut.elapsed() < duree && pos + BLOC_SEQUENTIEL as u64 <= taille {
         controler(suivi)?;
-        lire_a(f, &mut buf, pos).map_err(|e| format!("lecture à {pos} : {e}"))?;
+        f.lire_a(&mut buf, pos)
+            .map_err(|e| format!("lecture à {pos} : {e}"))?;
         pos += BLOC_SEQUENTIEL as u64;
         octets_tranche += BLOC_SEQUENTIEL as u64;
         blocs += 1;
@@ -252,15 +300,17 @@ fn sequentielle(
     })
 }
 
-/// Lectures de 4 Kio à des positions tirées au hasard sur toute la clé, `n` à la fois
-/// (un fil d'exécution et un descripteur par lecture simultanée).
-fn aleatoire(
-    fichiers: &[File],
-    taille: u64,
+/// Opérations de 4 Kio à des positions tirées au hasard dans `zone` (début, fin), autant à la fois
+/// que de supports (un fil d'exécution et un descripteur par opération simultanée).
+pub(crate) fn aleatoire<S: Support>(
+    fichiers: &[S],
+    zone: (u64, u64),
     duree: Duration,
+    mode: Mode,
     suivi: &dyn Suivi,
 ) -> Result<Aleatoire, String> {
-    let blocs = taille / BLOC_ALEATOIRE as u64;
+    let premier = zone.0.div_ceil(BLOC_ALEATOIRE as u64);
+    let blocs = (zone.1 / BLOC_ALEATOIRE as u64).saturating_sub(premier);
     if blocs == 0 {
         return Err("disque trop petit".into());
     }
@@ -274,13 +324,30 @@ fn aleatoire(
                 s.spawn(move || {
                     let mut h = Hasard::new(graine());
                     let mut buf = TamponAligne::new(BLOC_ALEATOIRE);
+                    if mode != Mode::Lecture {
+                        h.remplir(&mut buf);
+                    }
                     let (mut lat, mut vides) = (Vec::new(), 0u64);
                     while !arret.load(Ordering::Relaxed) {
-                        let pos = (h.suivant() % blocs) * BLOC_ALEATOIRE as u64;
+                        let pos = (premier + h.suivant() % blocs) * BLOC_ALEATOIRE as u64;
                         let t = Instant::now();
-                        lire_a(f, &mut buf, pos).map_err(|e| format!("lecture à {pos} : {e}"))?;
+                        match mode {
+                            Mode::Lecture => f
+                                .lire_a(&mut buf, pos)
+                                .map_err(|e| format!("lecture à {pos} : {e}"))?,
+                            Mode::Ecriture | Mode::EcritureSynchro => {
+                                // Contenu différent à chaque écriture (pas de déduplication).
+                                buf[..8].copy_from_slice(&h.suivant().to_le_bytes());
+                                f.ecrire_a(&buf, pos)
+                                    .map_err(|e| format!("écriture à {pos} : {e}"))?;
+                                if mode == Mode::EcritureSynchro {
+                                    f.synchroniser()
+                                        .map_err(|e| format!("synchronisation : {e}"))?;
+                                }
+                            }
+                        }
                         lat.push(t.elapsed().as_micros().min(u32::MAX as u128) as u32);
-                        if buf.iter().all(|&o| o == 0) {
+                        if mode == Mode::Lecture && buf.iter().all(|&o| o == 0) {
                             vides += 1;
                         }
                     }
@@ -343,7 +410,13 @@ pub fn mesurer(
     let sequentielle = sequentielle(&f, taille, durees.sequentielle, suivi)?;
 
     suivi.etape("Lectures aléatoires de 4 Ko, une à la fois");
-    let aleatoire_1 = aleatoire(std::slice::from_ref(&f), taille, durees.aleatoire, suivi)?;
+    let aleatoire_1 = aleatoire(
+        std::slice::from_ref(&f),
+        (0, taille),
+        durees.aleatoire,
+        Mode::Lecture,
+        suivi,
+    )?;
     suivi.progres(
         1.0,
         &format!(
@@ -360,7 +433,13 @@ pub fn mesurer(
     for _ in 1..EN_PARALLELE {
         fichiers.push(ouvrir()?.0);
     }
-    let aleatoire_n = aleatoire(&fichiers, taille, durees.aleatoire, suivi)?;
+    let aleatoire_n = aleatoire(
+        &fichiers,
+        (0, taille),
+        durees.aleatoire,
+        Mode::Lecture,
+        suivi,
+    )?;
     suivi.progres(1.0, "");
 
     Ok(Mesures {

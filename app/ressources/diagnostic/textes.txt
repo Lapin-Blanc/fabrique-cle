@@ -6,7 +6,8 @@
 # Format :
 #   [clé]           ce que c'est
 #   [clé.pourquoi]  pourquoi c'est important pour un système qui tourne depuis la clé
-# Les paragraphes sont séparés par une ligne vide ; les lignes commençant par # sont ignorées.
+# Les paragraphes (et les éléments d'une liste) sont séparés par une ligne vide ;
+# les lignes commençant par # sont ignorées.
 # Un test (`cargo test`) vérifie que chaque clé utilisée par l'application existe ici.
 
 [introduction]
@@ -31,7 +32,7 @@ utilisée.
 « Déduit » : une interprétation raisonnable des mesures, pas une certitude. Par USB, une clé ne
 dit presque rien de son intérieur : ni son contrôleur, ni son type de mémoire, ni son usure.
 
-« Non mesuré » : demande des écritures, donc l'effacement de la clé. Ce sera l'objet de
+« Non mesuré » : demande des écritures, donc l'effacement de la clé : c'est l'objet de
 l'analyse complète.
 
 [categories]
@@ -50,8 +51,8 @@ C. Clé à contrôleur de SSD (gammes « Pro » ou « SSD », anciennes clés ce
 D. SSD externe ou boîtier NVMe en USB : 30 à 100 Mo/s et plus, UAS et TRIM, endurance d'un vrai
 SSD. Excellent.
 
-La frontière entre B et C se joue surtout sur l'écriture aléatoire, que ce diagnostic en lecture
-seule ne mesure pas encore : le classement proposé ici reste donc une estimation.
+La frontière entre B et C se joue surtout sur l'écriture aléatoire. Les mesures en lecture seule
+ne donnent qu'une estimation ; l'analyse complète, qui écrit sur la clé, permet de la classer.
 
 [controleur]
 Le contrôleur est la puce qui gère la mémoire flash : il traduit les adresses demandées par le PC
@@ -214,3 +215,56 @@ petite partie (16 Go). Au-delà, elles écrasent en silence les données déjà 
 Pour une clé système chiffrée, ce serait une catastrophe : tout semble fonctionner, puis les
 fichiers se corrompent quelques semaines plus tard. On le détecte en écrivant des marqueurs sur
 toute la surface puis en les relisant. Cela demande l'analyse complète, qui efface la clé.
+
+Une clé contrefaite « replie » ses adresses : au-delà de sa capacité réelle, elle réécrit au
+début. Les marqueurs sont placés à intervalles réguliers (une puissance de deux), si bien qu'un
+marqueur replié retombe sur un marqueur déjà écrit et l'écrase : la relecture le révèle. C'est un
+contrôle par échantillon, en quelques secondes ; une vérification exhaustive (logiciels f3 ou
+H2testw) écrit et relit toute la surface, ce qui prend des heures.
+
+[analyse]
+L'analyse complète écrit sur la clé : elle l'efface entièrement. Elle sert à évaluer une clé avant
+de l'adopter, ou à comparer des modèles. Elle enchaîne cinq tests :
+
+1. Capacité réelle : des marqueurs sur toute la surface, puis relus (contrefaçons).
+
+2. Écritures aléatoires de 4 Ko, une à la fois puis plusieurs à la fois : le critère principal.
+
+3. Écritures synchronisées : chaque écriture attend d'être en sécurité, comme le font le journal
+du système ou un navigateur qui enregistre son historique.
+
+4. Longue écriture séquentielle : la courbe du débit montre le cache SLC se remplir.
+
+5. Lectures aléatoires sur les données écrites : une mesure réaliste, sans zones vides.
+
+À la fin, la clé est laissée vide, sans partition : il faut la fabriquer (onglet « Fabriquer une
+clé ») ou la reformater pour s'en resservir. L'usure causée par le test est négligeable : quelques
+gigaoctets écrits, sur une clé qui en encaissera des centaines.
+
+[ecriture_aleatoire]
+On écrit des blocs de 4 Ko à des emplacements tirés au hasard sur toute la clé, pendant quelques
+secondes, d'abord un à la fois, puis plusieurs à la fois. Chaque bloc a un contenu différent, pour
+que la clé ne puisse ni le compresser ni reconnaître une donnée déjà écrite.
+
+[ecriture_aleatoire.pourquoi]
+C'est le critère qui sépare le plus les clés pour un système : le système de fichiers, le journal,
+le cache du navigateur, les réglages du bureau écrivent sans cesse de petits blocs éparpillés.
+
+La mémoire flash ne sait pas réécrire un petit bloc sur place : elle efface et réécrit des blocs
+bien plus grands (plusieurs Mo). Un contrôleur de SSD absorbe ces petites écritures dans sa
+mémoire tampon et les regroupe ; un contrôleur de clé ordinaire réécrit à chaque fois un grand
+bloc, et tombe à quelques centaines d'écritures par seconde, voire moins. C'est la frontière
+entre une clé de catégorie B (moins de 2 Mo/s) et une clé de catégorie C (plus de 10 Mo/s).
+
+[ecriture_synchro]
+Une écriture synchronisée ne rend la main qu'une fois la donnée réellement inscrite dans la
+mémoire flash, et non simplement confiée à la clé. On écrit un bloc de 4 Ko, on demande la
+synchronisation, on recommence, et on mesure le temps de chaque aller-retour.
+
+[ecriture_synchro.pourquoi]
+Les programmes qui ne doivent rien perdre en cas de coupure (journal du système de fichiers,
+gestionnaire de paquets, navigateur, base de données) attendent cette confirmation. Pendant ce
+temps, ils sont bloqués, et l'interface avec eux : c'est ce qui fige le bureau.
+
+Un bon SSD répond en une fraction de milliseconde ; une clé ordinaire peut demander 10 ms ou plus
+à chaque fois, soit moins de cent écritures sûres par seconde.
