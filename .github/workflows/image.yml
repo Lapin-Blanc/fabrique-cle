@@ -66,6 +66,15 @@ jobs:
             image/out/test/fabrique-cle.log
           if-no-files-found: ignore
 
+      - name: Captures du premier démarrage (jauge de chiffrement)
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: captures-premier-demarrage
+          path: image/out/test/jauge.ppm
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Compresser (zstd + bmap), découper sous 2 Gio
         run: |
           cd image/out

@@ -137,6 +137,8 @@ PY
   done
   echo "Question visible après $((SECONDS - debut)) s : saisie de la phrase (deux fois)"
   taper "$PHRASE"; sleep 3; taper "$PHRASE"
+  # Capture pendant le chiffrement (≈ 1 min 40 dans QEMU) : la jauge doit être à l'écran (artefact CI)
+  sleep 30; moniteur "screendump $TRAV/jauge.ppm" || true
 ) &
 wait $QEMU || rc=$?
 if [ "$rc" -ne 0 ]; then echo "ÉCHEC : QEMU code $rc (124 = délai dépassé ; voir $TRAV/ecran.ppm)"; fi
@@ -241,6 +243,7 @@ printf '%s' "$PHRASE" | cryptsetup open --key-file - "$P3" "$CRYPT"
 vgchange -ay "$VG" >/dev/null
 mount -o ro "/dev/$VG/root" "$MNT"
 verifier "premier démarrage terminé" "grep -q TERMINÉ $MNT/var/log/fabrique-cle.log"
+verifier "progression du chiffrement suivie jusqu'à 100 % (jauge)" "grep -qE 'chiffrement 100 % \\(' $MNT/var/log/fabrique-cle.log"
 verifier "démarré avec Secure Boot actif" "grep -q 'Secure Boot : 1' $MNT/var/log/fabrique-cle.log"
 verifier "compte eleve créé, membre de sudo" "grep -q '^eleve:' $MNT/etc/passwd && grep -qE '^sudo:.*\\beleve\\b' $MNT/etc/group"
 verifier "nom de machine cle-test" "[ \"\$(cat $MNT/etc/hostname)\" = cle-test ]"

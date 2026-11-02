@@ -57,7 +57,10 @@ Fichier image de 10 Gio (creux), monté en loop, dans un **espace de montage pri
 ## 2. Premier démarrage (`fabrique-cle-premier-demarrage` + service systemd)
 
 Service `oneshot` sur tty1, `Before=display-manager.service`, condition `/var/lib/fabrique-cle/a-configurer`.
-Étapes (chacune marquée `fait-*` dans `/var/lib/fabrique-cle`, donc rejouable) :
+Étapes (chacune marquée `fait-*` dans `/var/lib/fabrique-cle`, donc rejouable). Après les questions,
+chaque étape longue est annoncée dans une fenêtre whiptail (« Étape n sur N », 5 avec chiffrement,
+3 sans) ; l'écran est réservé à whiptail : `journal` et les sorties des commandes vont dans
+`/var/log/fabrique-cle.log`, jamais sur la console.
 
 1. Lecture de `/boot/efi/fabrique-cle/config.txt` (clé=valeur, jamais exécuté, CRLF toléré) ; valeurs
    manquantes ou invalides demandées avec whiptail.
@@ -67,6 +70,11 @@ Service `oneshot` sur tty1, `Before=display-manager.service`, condition `/var/li
    (`cipher_null` → AES-XTS, nouvelle clé maîtresse ; ~1 min pour l'image) — avant l'agrandissement pour
    ne traiter que la taille de l'image. Reprise après coupure (`--resume-only` si l'en-tête porte
    `online-reencrypt`), contrôle final : plus aucun segment `cipher_null`.
+   **Jauge** : `--progress-json --progress-frequency 1` → filtre bash `jauge_chiffrement` → `whiptail
+   --gauge` (pourcentage, Mio traités, débit, temps restant ; à la reprise, la barre repart du point
+   atteint). Le filtre ignore SIGPIPE et lit jusqu'au bout : un affichage défaillant n'interrompt jamais
+   cryptsetup ; le code de retour reste le sien (`pipefail`). Chaque dizaine de % est notée au journal
+   avec le débit (mesure du débit réel de chaque clé).
 5. Agrandissement : `sgdisk -e`, `growpart`, `cryptsetup resize`, `pvresize`, `lvextend -r`.
 6. Si chiffrement : ajout de la phrase de l'élève, retrait de la clé temporaire (slot + fichier + crypttab).
    Sans chiffrement : le volume reste en `cipher_null` (réellement non chiffré) et la clé temporaire
@@ -152,4 +160,6 @@ Garde-fou : échec si l'image compressée dépasse 3 Go (signe d'un volume chiff
 libres « sales »). Découpage en `*.part00…` au-delà de 2 000 Mio (limite GitHub : 2 Gio par fichier).
 Étiquette `v*` : idem + release GitHub. Le test démarre une **copie agrandie de 6 Gio** de l'image en
 **clé USB xHCI**, OVMF **Secure Boot avec clés Microsoft**, NVRAM vierge, puis inspecte la clé hors ligne
-(15 vérifications, dont « AES-XTS, plus de `cipher_null` »). En cas d'échec : capture d'écran `ecran.ppm` et journal en artefact.
+(24 vérifications, dont « AES-XTS, plus de `cipher_null` » et « progression du chiffrement suivie jusqu'à
+100 % »). En cas d'échec : capture d'écran `ecran.ppm` et journal en artefact. Toujours : `jauge.ppm`,
+capture prise 30 s après la saisie de la phrase (jauge de chiffrement), artefact `captures-premier-demarrage`.
