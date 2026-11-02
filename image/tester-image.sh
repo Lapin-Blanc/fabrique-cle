@@ -181,7 +181,7 @@ verifier "synchronisation de l'heure (systemd-timesyncd) activée" "[ -L $MNT/et
 installe() { grep -A1 -x "Package: $1" $MNT/var/lib/dpkg/status | grep -q 'Status: install ok installed'; }
 verifier "Brave installé, seul navigateur (ni Firefox ni Konqueror)" "$(declare -f installe); installe brave-browser && ! installe firefox-esr && ! installe konqueror"
 verifier "Brave navigateur par défaut (mimeapps, Plasma)" "grep -q 'x-scheme-handler/https=brave-browser.desktop' $MNT/etc/xdg/mimeapps.list && grep -q 'BrowserApplication=brave-browser.desktop' $MNT/etc/xdg/kdeglobals"
-verifier "fond « image du jour » (plugin + lancement à la 1re session)" "$(declare -f installe); installe plasma-wallpapers-addons && installe kdeplasma-addons && [ -x $MNT/usr/local/bin/fabrique-cle-fond-du-jour ] && [ -e $MNT/etc/xdg/autostart/fabrique-cle-fond-du-jour.desktop ]"
+verifier "fond « image du jour » (plugin + lancement à la 1re session)" "$(declare -f installe); installe plasma-wallpapers-addons && [ -x $MNT/usr/local/bin/fabrique-cle-fond-du-jour ] && [ -e $MNT/etc/xdg/autostart/fabrique-cle-fond-du-jour.desktop ]"
 verifier "curl installé" "$(declare -f installe); installe curl"
 verifier "réglages clé USB : sysctl, BFQ (udev 61 + module), journal" "[ -e $MNT/etc/sysctl.d/90-fabrique-cle.conf ] && grep -q 'ID_BUS}==\"usb\".*bfq' $MNT/etc/udev/rules.d/61-fabrique-cle-usb.rules && grep -qx bfq $MNT/etc/modules-load.d/fabrique-cle-bfq.conf && grep -q 'SyncIntervalSec=30s' $MNT/etc/systemd/journald.conf.d/fabrique-cle.conf"
 verifier "racine en noatime,commit=30 ; ~/.cache de eleve en RAM" "grep -qE '\\s/\\s+ext4\\s+\\S*noatime,commit=30' $MNT/etc/fstab && grep -qE '^tmpfs /home/eleve/.cache tmpfs ' $MNT/etc/fstab"

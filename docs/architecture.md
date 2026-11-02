@@ -34,7 +34,7 @@ Fichier image de 10 Gio (creux), monté en loop, dans un **espace de montage pri
   `force_efi_extra_removable=true`, `update_nvram=false` ; hook APT qui supprime `EFI/BOOT/fbx64.efi`.
 - Navigateur : **Brave** seul (dépôt officiel, trousseau versionné dans `image/fichiers/usr/share/keyrings/`,
   tenu à jour ensuite par le paquet `brave-keyring`), par défaut via `/etc/xdg/mimeapps.list` et
-  `kdeglobals` ; Konqueror et Firefox exclus. `kdeplasma-addons`, `plasma-wallpapers-addons` : fond
+  `kdeglobals` ; Konqueror et Firefox exclus. `plasma-wallpapers-addons` : fond
   « image du jour » (Bing) appliqué une fois à la 1re session (`/etc/xdg/autostart`, `evaluateScript`).
 - Réglages pour clé USB lente, neutres sur un SSD rapide : écriture différée bornée (16/64 Mio),
   zram favorisé (`swappiness=150`, `page-cluster=0`), BFQ + lecture anticipée 512 Ko pour les disques
