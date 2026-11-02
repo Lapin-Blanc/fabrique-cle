@@ -153,6 +153,15 @@ fn controleur(m: &Materiel, mes: Option<&Mesures>, an: Option<&Analyse>) -> Fich
         }
         _ => "Identifiant USB non disponible.".into(),
     };
+    if let Some(v) = m.vid {
+        let (f, p) = super::usbids::noms(v, m.pid);
+        if let Some(f) = f {
+            commentaire += &format!(
+                " Base usb.ids : {f}{}.",
+                p.map(|p| format!(" — {p}")).unwrap_or_default()
+            );
+        }
+    }
     let uas = m.protocole() == Some(Protocole::Uas);
     let bot = m.protocole() == Some(Protocole::Bot);
     let trim = m.trim == Some(true);
@@ -306,6 +315,13 @@ fn parallelisme(mes: &Mesures) -> Fiche {
             "Non significatif : les interruptions (voir « Régularité ») limitent davantage que \
              le protocole ou le contrôleur.",
         )
+    } else if g < 0.8 {
+        (
+            Appreciation::Faible,
+            "Perte : avec plusieurs demandes à la fois, la clé ralentit. Pont USB dont la file \
+             de commandes fonctionne mal, ou interruption pendant ce test : refaites la mesure \
+             pour trancher.",
+        )
     } else if g >= 1.8 {
         (
             Appreciation::Bon,
@@ -329,9 +345,13 @@ fn parallelisme(mes: &Mesures) -> Fiche {
         Certitude::Mesure,
         appr,
         format!(
-            "{commentaire} ({} lectures/s une à une, {} à {EN_PARALLELE} en même temps.)",
+            "{commentaire} ({} lectures/s une à une, {} à {EN_PARALLELE} en même temps ; à \
+             {EN_PARALLELE} : médiane {}, 99 % sous {}, la plus lente {}.)",
             dec(mes.aleatoire_1.iops),
-            dec(mes.aleatoire_n.iops)
+            dec(mes.aleatoire_n.iops),
+            duree_us(mes.aleatoire_n.latences.mediane_us),
+            duree_us(mes.aleatoire_n.latences.p99_us),
+            duree_us(mes.aleatoire_n.latences.max_us)
         ),
     )
 }
@@ -891,6 +911,41 @@ pub fn estimation(
     (texte, appr)
 }
 
+/// Recherche sur le web à partir de l'identifiant le plus précis : puce connue de notre table,
+/// sinon produit de la base usb.ids, sinon identifiant USB, sinon modèle déclaré.
+pub fn requete_web(d: &Disque, m: &Materiel) -> Option<String> {
+    if let Some(v) = m.vid {
+        if let Some(f) = identification(v, m.pid).filter(|f| f.pid.is_some()) {
+            let puce = f.nom.split(',').next().unwrap_or(f.nom).trim();
+            let puce = puce.replace(" (probablement)", "");
+            return Some(format!("{puce} specifications"));
+        }
+        let (f, p) = super::usbids::noms(v, m.pid);
+        if let (Some(f), Some(p)) = (f, p) {
+            return Some(format!("{f} {p} USB controller"));
+        }
+        if let Some(p) = m.pid {
+            return Some(format!("USB {v:04x}:{p:04x} controller"));
+        }
+    }
+    (!d.nom.is_empty()).then(|| format!("{} specifications", d.nom))
+}
+
+/// Adresse de la recherche (DuckDuckGo : sans compte ni pistage publicitaire).
+pub fn adresse_recherche(requete: &str) -> String {
+    let mut q = String::new();
+    for o in requete.bytes() {
+        match o {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                q.push(o as char)
+            }
+            b' ' => q.push('+'),
+            _ => q += &format!("%{o:02X}"),
+        }
+    }
+    format!("https://duckduckgo.com/?q={q}")
+}
+
 /// Résumé en texte brut, à copier (comparaison de modèles, support).
 pub fn resume(d: &Disque, m: &Materiel, mes: Option<&Mesures>, an: Option<&Analyse>) -> String {
     let mut s = format!("Diagnostic Fabrique-Clé ({})\n", env!("VERSION_APPLI"));
@@ -1086,6 +1141,55 @@ mod tests {
         let f = fiches(&m, 32_000_000_000, None, None);
         assert!(f.iter().any(|f| f.valeur == "pas encore mesuré"));
         assert_eq!(estimation(&m, None, None).1, Appreciation::Neutre);
+    }
+
+    #[test]
+    fn recherche_web() {
+        let d = Disque {
+            chemin: "/dev/sdb".into(),
+            nom: "SSK Portable SSD".into(),
+            serie: String::new(),
+            taille: 1,
+        };
+        let m = Materiel {
+            vid: Some(0x090c),
+            pid: Some(0x2320),
+            ..Default::default()
+        };
+        assert_eq!(
+            requete_web(&d, &m).unwrap(),
+            "Silicon Motion SM2320 specifications"
+        );
+        let m = Materiel {
+            vid: Some(0x2109),
+            pid: Some(0x0715),
+            ..Default::default()
+        };
+        assert_eq!(
+            requete_web(&d, &m).unwrap(),
+            "VIA Labs VL715 specifications"
+        );
+        let m = Materiel {
+            vid: Some(0x0781),
+            pid: Some(0x5581),
+            ..Default::default()
+        };
+        assert_eq!(
+            requete_web(&d, &m).unwrap(),
+            "SanDisk Corp. Ultra USB controller"
+        );
+        assert_eq!(
+            adresse_recherche("SM2320 & co"),
+            "https://duckduckgo.com/?q=SM2320+%26+co"
+        );
+    }
+
+    #[test]
+    fn parallelisme_en_perte() {
+        let x = mesures(5693.0, 1609.0, 531);
+        let f = parallelisme(&x);
+        assert_eq!(f.appreciation, Appreciation::Faible);
+        assert!(f.commentaire.starts_with("Perte"));
     }
 
     #[test]

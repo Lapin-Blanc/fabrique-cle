@@ -9,3 +9,4 @@ pub mod interpretation;
 pub mod materiel;
 pub mod mesures;
 pub mod textes;
+pub mod usbids;

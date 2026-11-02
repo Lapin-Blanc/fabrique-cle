@@ -830,6 +830,15 @@ impl Appli {
         if let Some(o) = &m.ordonnanceur {
             lignes.push(("Ordonnanceur d'E/S (ce PC)", o.clone()));
         }
+        if let Some(v) = m.vid {
+            let (f, p) = crate::diagnostic::usbids::noms(v, m.pid);
+            if let Some(f) = f {
+                lignes.push((
+                    "Base usb.ids",
+                    format!("{f}{}", p.map(|p| format!(" — {p}")).unwrap_or_default()),
+                ));
+            }
+        }
         egui::Grid::new("materiel")
             .num_columns(2)
             .spacing([14.0, 5.0])
@@ -841,6 +850,33 @@ impl Appli {
                     ui.end_row();
                 }
             });
+        if let Some(requete) = interpretation::requete_web(d, m) {
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .button("Chercher ce contrôleur sur le web")
+                    .on_hover_text(
+                        "Ouvre le navigateur sur une recherche (DuckDuckGo). Vérifiez les sources : \
+                         fiche du fabricant, tests reconnus…",
+                    )
+                    .clicked()
+                {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(
+                        interpretation::adresse_recherche(&requete),
+                    ));
+                }
+                ui.label(egui::RichText::new(format!("« {requete} »")).small().weak());
+            });
+            ui.label(
+                egui::RichText::new(format!(
+                    "Noms tirés de notre table et de la base communautaire usb.ids ({}) : des \
+                     indices, parfois approximatifs ; les mesures restent la référence.",
+                    crate::diagnostic::usbids::version()
+                ))
+                .small()
+                .weak(),
+            );
+        }
         if m.bridee_en_usb2() {
             ui.add_space(6.0);
             Self::encadre(

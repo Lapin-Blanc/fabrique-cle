@@ -45,3 +45,4 @@ abcd  suspect     VID non attribué (« abcd ») : clé générique, souvent con
 152d:0583  pont  JMicron JMS583, pont USB 3.2 Gen 2 vers SSD NVMe
 152d:0578  pont  JMicron JMS578, pont USB 3 vers SSD SATA
 174c:2362  pont  ASMedia ASM2362, pont USB 3.2 Gen 2 vers SSD NVMe
+2109:0715  pont  VIA Labs VL715 (probablement), pont USB 3.2 Gen 2 vers SSD SATA
