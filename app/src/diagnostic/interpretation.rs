@@ -4,7 +4,7 @@
 
 use super::analyse::Analyse;
 use super::materiel::{Materiel, Protocole, Role, fabricant, nom_vitesse};
-use super::mesures::{EN_PARALLELE, Mesures};
+use super::mesures::{Aleatoire, EN_PARALLELE, Mesures, Sequentielle};
 use crate::disques::Disque;
 use crate::suivi::taille_lisible;
 
@@ -51,7 +51,8 @@ pub struct Fiche {
 
 /// Toutes les clés de textes que peuvent produire les fiches (vérifié par un test).
 #[cfg(test)]
-pub const CLES: [&str; 15] = [
+pub const CLES: [&str; 16] = [
+    "regularite",
     "controleur",
     "ecriture_aleatoire",
     "ecriture_synchro",
@@ -234,10 +235,76 @@ fn protocole(m: &Materiel) -> Fiche {
     )
 }
 
+/// Temps de réponse très irréguliers : la moyenne dépasse de loin la médiane (quelques opérations
+/// très lentes dominent le total) et les pires cas atteignent des dizaines de millisecondes.
+pub fn irreguliere(a: &Aleatoire) -> bool {
+    if a.operations == 0 {
+        return false;
+    }
+    let moyenne_us = a.duree_s * 1e6 * a.en_parallele as f64 / a.operations as f64;
+    moyenne_us >= 3.0 * a.latences.mediane_us.max(1) as f64 && a.latences.p99_us >= 20_000
+}
+
+/// Débit séquentiel qui varie de plus d'un facteur dix d'une demi-seconde à l'autre.
+fn sequentielle_irreguliere(s: &Sequentielle) -> bool {
+    let (min, max) = s
+        .serie_mo_s
+        .iter()
+        .fold((f32::MAX, 0f32), |(a, b), &v| (a.min(v), b.max(v)));
+    s.serie_mo_s.len() >= 4 && min * 10.0 < max
+}
+
+fn lectures_irregulieres(mes: &Mesures) -> bool {
+    irreguliere(&mes.aleatoire_1)
+        || irreguliere(&mes.aleatoire_n)
+        || sequentielle_irreguliere(&mes.sequentielle)
+}
+
+fn regularite(mes: &Mesures) -> Fiche {
+    let a = &mes.aleatoire_1;
+    let moyenne_us = (a.duree_s * 1e6 / a.operations.max(1) as f64) as u32;
+    let mut commentaire = format!(
+        "La moitié des lectures aboutit en moins de {}, mais la moyenne est de {} : quelques \
+         lectures très lentes (jusqu'à {}) pèsent plus que toutes les autres.",
+        duree_us(a.latences.mediane_us),
+        duree_us(moyenne_us),
+        duree_us(a.latences.max_us)
+    );
+    if sequentielle_irreguliere(&mes.sequentielle) {
+        let (min, max) = mes
+            .sequentielle
+            .serie_mo_s
+            .iter()
+            .fold((f32::MAX, 0f32), |(a, b), &v| (a.min(v), b.max(v)));
+        commentaire += &format!(
+            " En lecture séquentielle, le débit varie de {} à {} Mo/s.",
+            dec(min as f64),
+            dec(max as f64)
+        );
+    }
+    commentaire += " Débits et parallélisme en sont faussés : refaites la mesure après avoir \
+                    fermé les fenêtres et programmes qui utilisent la clé, une ou deux minutes \
+                    après l'avoir branchée.";
+    fiche(
+        "regularite",
+        "Régularité",
+        "temps de réponse très irréguliers",
+        Certitude::Mesure,
+        Appreciation::Faible,
+        commentaire,
+    )
+}
+
 fn parallelisme(mes: &Mesures) -> Fiche {
     let g = gain_parallele(mes);
     let valeur = format!("× {} avec {EN_PARALLELE} lectures simultanées", dec(g));
-    let (appr, commentaire) = if g >= 1.8 {
+    let (appr, commentaire) = if irreguliere(&mes.aleatoire_1) || irreguliere(&mes.aleatoire_n) {
+        (
+            Appreciation::Neutre,
+            "Non significatif : les interruptions (voir « Régularité ») limitent davantage que \
+             le protocole ou le contrôleur.",
+        )
+    } else if g >= 1.8 {
         (
             Appreciation::Bon,
             "La clé traite réellement plusieurs demandes à la fois.",
@@ -428,6 +495,12 @@ fn ecriture_4k(a: &Analyse) -> f64 {
 
 fn ecriture_aleatoire(a: &Analyse) -> Fiche {
     let w = ecriture_4k(a);
+    let pauses = if irreguliere(&a.ecriture_1) || irreguliere(&a.ecriture_n) {
+        " Écritures très irrégulières : le contrôleur s'interrompt pour réorganiser sa mémoire, \
+         ce que l'on ressent comme des gels du bureau."
+    } else {
+        ""
+    };
     let appr = if w >= 10.0 {
         Appreciation::Bon
     } else if w >= 0.5 {
@@ -447,7 +520,7 @@ fn ecriture_aleatoire(a: &Analyse) -> Fiche {
         appr,
         format!(
             "Une à la fois : {} écritures/s ; {EN_PARALLELE} à la fois : {} écritures/s. \
-             Écriture la plus lente : {}.",
+             Écriture la plus lente : {}.{pauses}",
             dec(a.ecriture_1.iops),
             dec(a.ecriture_n.iops),
             duree_us(
@@ -635,6 +708,9 @@ pub fn fiches(
             }
             f.push(l);
             f.push(latence(x));
+            if lectures_irregulieres(x) {
+                f.push(regularite(x));
+            }
         }
         None => {
             f.push(en_attente("parallelisme", "Parallélisme"));
@@ -876,6 +952,39 @@ mod tests {
         let par = |c: &str| f.iter().find(|f| f.cle == c).unwrap();
         assert_eq!(par("controleur").appreciation, Appreciation::Bon);
         assert_eq!(par("parallelisme").appreciation, Appreciation::Bon);
+    }
+
+    /// Cas réel : SSD NVMe WD SN350 en boîtier RTL9210, sous Windows (2026-11-02).
+    #[test]
+    fn lectures_irregulieres_signalees() {
+        let m = Materiel {
+            vid: Some(0x0bda),
+            pid: Some(0x9210),
+            pilote: Some("UASPStor".into()),
+            trim: Some(true),
+            vitesse_mbps: Some(10000),
+            ..Default::default()
+        };
+        let mut x = mesures(364.0, 446.0, 52_000);
+        x.aleatoire_1.operations = 2925;
+        x.aleatoire_1.duree_s = 8.0;
+        x.aleatoire_1.latences.mediane_us = 237;
+        x.sequentielle.serie_mo_s = vec![478.0, 8.3, 120.0, 30.0];
+        let f = fiches(&m, 1_000_000_000_000, Some(&x), None);
+        let par = |c: &str| f.iter().find(|f| f.cle == c).cloned();
+        assert_eq!(
+            par("regularite").unwrap().appreciation,
+            Appreciation::Faible
+        );
+        assert_eq!(
+            par("parallelisme").unwrap().appreciation,
+            Appreciation::Neutre
+        );
+        // Profil régulier (clé ordinaire) : pas de fiche « Régularité ».
+        let mut y = mesures(2000.0, 2050.0, 3000);
+        y.aleatoire_1.operations = 16_000;
+        let f = fiches(&m, 32_000_000_000, Some(&y), None);
+        assert!(f.iter().all(|f| f.cle != "regularite"));
     }
 
     fn analyse(ecriture_iops: f64, synchro_us: u32, conforme: bool) -> Analyse {

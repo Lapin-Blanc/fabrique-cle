@@ -11,15 +11,15 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
-    CM_DRP_ADDRESS, CM_DRP_MFG, CM_DRP_SERVICE, CM_Get_DevNode_Registry_PropertyW,
-    CM_Get_Device_IDW, CM_Get_Parent, CR_SUCCESS, DIGCF_DEVICEINTERFACE, DIGCF_PRESENT, HDEVINFO,
+    CM_DRP_ADDRESS, CM_DRP_SERVICE, CM_Get_DevNode_Registry_PropertyW, CM_Get_Device_IDW,
+    CM_Get_Parent, CR_SUCCESS, DIGCF_DEVICEINTERFACE, DIGCF_PRESENT, HDEVINFO,
     SP_DEVICE_INTERFACE_DATA, SP_DEVICE_INTERFACE_DETAIL_DATA_W, SP_DEVINFO_DATA,
     SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInterfaces, SetupDiGetClassDevsW,
     SetupDiGetDeviceInterfaceDetailW,
 };
 use windows_sys::Win32::Devices::Usb::{
-    GUID_DEVINTERFACE_USB_HUB, IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX,
-    IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX_V2,
+    GUID_DEVINTERFACE_USB_HUB, IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
+    IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX, IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX_V2,
 };
 use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
@@ -483,6 +483,37 @@ fn champ_hexa(id: &str, cle: &str) -> Option<u16> {
     u16::from_str_radix(id.get(i..i + 4)?, 16).ok()
 }
 
+/// Chaîne d'un descripteur USB (fabricant, produit…), demandée au concentrateur ; `indice` vient
+/// du descripteur de périphérique (0 : pas de chaîne). Langue : anglais américain (0x0409), la
+/// seule que fournissent presque toutes les clés.
+fn chaine_usb(h: &OwnedHandle, port: u32, indice: u8) -> Option<String> {
+    if indice == 0 {
+        return None;
+    }
+    // USB_DESCRIPTOR_REQUEST (aligné sur 1 octet) : port (4), paquet SETUP (8), puis les données.
+    let mut b = vec![0u8; 12 + 255];
+    b[..4].copy_from_slice(&port.to_le_bytes());
+    b[4] = 0x80; // périphérique vers hôte
+    b[5] = 6; // GET_DESCRIPTOR
+    b[6..8].copy_from_slice(&((3u16 << 8) | indice as u16).to_le_bytes()); // descripteur de chaîne
+    b[8..10].copy_from_slice(&0x0409u16.to_le_bytes());
+    b[10..12].copy_from_slice(&255u16.to_le_bytes());
+    let entree = b.clone();
+    let n = ioctl(
+        h,
+        IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
+        &entree,
+        &mut b,
+    )?;
+    // Descripteur : longueur, type (3 = chaîne), puis le texte en UTF-16LE.
+    let d = &b[12..n.min(b.len())];
+    if d.len() < 4 || d[1] != 3 {
+        return None;
+    }
+    let texte = chaine_utf16(&d[2..(d[0] as usize).min(d.len())]);
+    (!texte.is_empty()).then_some(texte)
+}
+
 /// Vitesse et version USB, demandées au concentrateur (hub) sur lequel la clé est branchée.
 fn liaison_usb(m: &mut Materiel, noeud_usb: u32) {
     let Some(port) = propriete_noeud(noeud_usb, CM_DRP_ADDRESS)
@@ -518,6 +549,10 @@ fn liaison_usb(m: &mut Materiel, noeud_usb: u32) {
     .is_some_and(|n| n >= 24)
     {
         let bcd = u16::from_le_bytes([b[6], b[7]]);
+        // iManufacturer et iProduct : octets 14 et 15 du descripteur, qui commence à l'octet 4.
+        let (i_fab, i_prod) = (b[18], b[19]);
+        m.fabricant_usb = chaine_usb(&h, port, i_fab).unwrap_or_default();
+        m.produit_usb = chaine_usb(&h, port, i_prod).unwrap_or_default();
         m.version_usb = Some(format!("{:x}.{:02x}", bcd >> 8, bcd & 0xff));
         m.vitesse_mbps = match b[23] {
             0 => Some(1),
@@ -597,9 +632,6 @@ pub fn identifier(d: &Disque) -> Materiel {
             m.pilote = propriete_noeud(noeud, CM_DRP_SERVICE)
                 .map(|b| chaine_utf16(&b))
                 .filter(|s| !s.is_empty());
-            m.fabricant_usb = propriete_noeud(noeud, CM_DRP_MFG)
-                .map(|b| chaine_utf16(&b))
-                .unwrap_or_default();
             liaison_usb(&mut m, noeud);
             break;
         }
