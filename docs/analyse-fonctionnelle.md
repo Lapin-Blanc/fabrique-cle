@@ -28,7 +28,9 @@ Les textes affichés (application, premier démarrage) ne supposent pas un publi
    `fabrique-cle/config.txt` sur la partition EFI.
 5. Démarre un PC sur la clé (menu de démarrage du firmware, ex. F9 chez HP, F12 ailleurs).
 6. Premier démarrage : écran texte ; si chiffrement, saisit **deux fois sa phrase secrète** ; patiente
-   (~2 min) ; arrive sur l'écran de connexion Plasma.
+   en suivant les étapes à l'écran (« Étape n sur N », jauge avec temps restant pendant le chiffrement) :
+   quelques minutes sur un SSD USB, sans doute 10 à 15 min sur une clé lente (le chiffrement réécrit
+   tout le volume de l'image, ~8,5 Gio) ; arrive sur l'écran de connexion Plasma.
 
 L'image doit **aussi** fonctionner gravée avec un autre outil (Rufus, Etcher, dd) : sans `config.txt`,
 le premier démarrage pose toutes les questions à l'écran.

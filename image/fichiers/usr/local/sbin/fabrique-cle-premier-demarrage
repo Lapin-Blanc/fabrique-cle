@@ -23,7 +23,9 @@ CLAVIERS="be fr ch us"
 LANGUES="fr_BE.UTF-8 fr_FR.UTF-8 fr_CH.UTF-8 nl_BE.UTF-8 en_US.UTF-8"
 
 exec 3>>"$LOG"
-journal() { printf '%s %s\n' "$(date '+%F %T')" "$*" >&3; printf '\n>>> %s\n' "$*"; }
+# Journal dans $LOG seulement : l'écran est réservé aux fenêtres whiptail (questions, étapes, jauge),
+# qu'une ligne écrite sur la console recouvrirait.
+journal() { printf '%s %s\n' "$(date '+%F %T')" "$*" >&3; }
 fait() { [ -e "$ETAT/fait-$1" ]; }
 marquer() { touch "$ETAT/fait-$1"; }
 echec() {
@@ -40,6 +42,45 @@ conf() {
   grep -m1 -E "^$1=" "$CONF" | cut -d= -f2- | tr -d '\r' || true
 }
 dans_liste() { local v=$1; shift; for x in "$@"; do [ "$v" = "$x" ] && return 0; done; return 1; }
+
+# Étape en cours, affichée dans une fenêtre qui reste à l'écran pendant les opérations longues.
+# Les sorties des commandes vont au journal (>&3), pour ne pas recouvrir la fenêtre.
+numero() {  # numero <identifiant> -> « Étape n sur N »
+  local i
+  for i in "${!ETAPES[@]}"; do [ "${ETAPES[$i]}" = "$1" ] && echo "Étape $((i + 1)) sur ${#ETAPES[@]}"; done
+}
+etape() {  # etape <identifiant> <texte> (identifiants : voir ETAPES)
+  journal "$2"
+  whiptail --title "$TITRE" --infobox "$(numero "$1") : $2\n\nNe débranchez pas la clé." 9 74 || true
+}
+
+# Progression de « cryptsetup reencrypt --progress-json » (une ligne JSON par seconde, même avec
+# --batch-mode, qui masque la progression ordinaire) -> protocole de « whiptail --gauge »
+# (XXX / pourcentage / texte / XXX). Trace aussi chaque dizaine de % dans le journal (débit réel).
+jauge_chiffrement() {  # jauge_chiffrement <texte de l'étape>
+  # Rien de l'affichage ne doit interrompre cryptsetup : si whiptail meurt, on continue à lire (et on
+  # ignore SIGPIPE) jusqu'à la fin de sa sortie. Une coupure resterait rattrapable, mais inutilement.
+  trap '' PIPE
+  local l fait total vit eta pct reste temps dizaine=-1
+  while IFS= read -r l; do
+    [[ $l =~ \"device_bytes\":\"([0-9]+)\".*\"device_size\":\"([0-9]+)\".*\"speed\":\"([0-9]+)\".*\"eta_ms\":\"([0-9]+)\" ]] || continue
+    fait=${BASH_REMATCH[1]} total=${BASH_REMATCH[2]} vit=${BASH_REMATCH[3]} eta=${BASH_REMATCH[4]}
+    (( total > 0 )) || continue
+    pct=$(( fait * 100 / total ))
+    # Temps restant : seulement s'il est plausible (débit nul au début => ETA infinie côté cryptsetup)
+    temps="calcul du temps restant…"
+    if (( vit > 0 )) && [ "${#eta}" -le 9 ]; then
+      reste=$(( eta / 1000 ))
+      temps="encore environ $(( reste / 60 )) min $(printf '%02d' $(( reste % 60 ))) s"
+    fi
+    printf 'XXX\n%d\n%s\n\n%d / %d Mio — %d Mio/s — %s\n\nNe débranchez pas la clé. Après une coupure, le chiffrement\nreprend là où il s’était arrêté au démarrage suivant.\nXXX\n' \
+      "$pct" "$1" $(( fait >> 20 )) $(( total >> 20 )) $(( vit >> 20 )) "$temps" 2>/dev/null || true
+    if (( pct / 10 > dizaine )); then
+      dizaine=$(( pct / 10 ))
+      journal "chiffrement $pct % ($(( fait >> 20 )) / $(( total >> 20 )) Mio, $(( vit >> 20 )) Mio/s)"
+    fi
+  done
+}
 
 demander() {  # demander <question> <défaut> -> stdout
   whiptail --title "$TITRE" --inputbox "$1" 10 70 "$2" 3>&1 1>&2 2>&3
@@ -102,6 +143,9 @@ CHIFFRER=$(conf chiffrer)
 dans_liste "$CHIFFRER" oui non || {
   if whiptail --title "$TITRE" --yesno "Chiffrer la clé ?\n\nOui : une phrase secrète sera demandée à chaque démarrage (recommandé si la clé contient des données personnelles).\nNon : la clé démarre sans phrase." 13 70; then CHIFFRER=oui; else CHIFFRER=non; fi
 }
+# Étapes affichées (« Étape n sur N »), selon le chiffrement
+if [ "$CHIFFRER" = oui ]; then ETAPES=(systeme chiffrement agrandissement phrase demarrage)
+else ETAPES=(systeme agrandissement demarrage); fi
 journal "clavier=$CLAVIER langue=$LANGUE identifiant=$IDENT machine=$MACHINE chiffrer=$CHIFFRER mot_de_passe=$([ -n "$HASH" ] && echo fourni || echo à_saisir)"
 
 # Secrets saisis maintenant, avant les opérations longues
@@ -116,13 +160,15 @@ if [ "$CHIFFRER" = oui ] && ! fait chiffrement; then
 fi
 
 # ---------------------------------------------------------------------------
+if ! fait systeme || ! fait compte; then
+  etape systeme "Langue, nom de la machine et compte « $IDENT »"
+fi
 if ! fait systeme; then
-  journal "Clavier, langue, nom de machine"
   sed -i -E "s/^# *($LANGUE .*)/\1/" /etc/locale.gen
   grep -q "^$LANGUE " /etc/locale.gen || echo "$LANGUE UTF-8" >> /etc/locale.gen
-  locale-gen >/dev/null
+  locale-gen >&3 2>&1
   echo "LANG=$LANGUE" > /etc/default/locale
-  setupcon --save-only
+  setupcon --save-only >&3 2>&1
   echo "$MACHINE" > /etc/hostname
   hostname "$MACHINE"
   sed -i -E "s/^127\.0\.1\.1\s.*/127.0.1.1\t$MACHINE/" /etc/hosts
@@ -130,7 +176,6 @@ if ! fait systeme; then
 fi
 
 if ! fait compte; then
-  journal "Compte $IDENT"
   getent passwd "$IDENT" >/dev/null || useradd -m -s /bin/bash -c "$NOM" "$IDENT"
   # ~/.cache en RAM : caches du navigateur et miniatures n'usent plus la clé (vidé à chaque démarrage).
   # tmpfs : n'occupe que ce qu'il contient, plafonné à 1 Gio.
@@ -139,8 +184,8 @@ if ! fait compte; then
       "$IDENT" "$(id -u "$IDENT")" "$(id -g "$IDENT")" >> /etc/fstab
   fi
   install -d -m 700 -o "$IDENT" -g "$(id -gn "$IDENT")" "/home/$IDENT/.cache"
-  systemctl daemon-reload || true
-  mountpoint -q "/home/$IDENT/.cache" || mount "/home/$IDENT/.cache" || true   # dès la 1re session
+  systemctl daemon-reload >&3 2>&1 || true
+  mountpoint -q "/home/$IDENT/.cache" || mount "/home/$IDENT/.cache" >&3 2>&1 || true   # dès la 1re session
   for g in sudo audio video plugdev netdev bluetooth lpadmin scanner; do
     getent group "$g" >/dev/null && usermod -aG "$g" "$IDENT"
   done
@@ -161,13 +206,19 @@ if [ "$CHIFFRER" = oui ] && ! fait rechiffrement; then
   # (en-tête lu dans une variable : « luksDump | grep -q » peut échouer en SIGPIPE avec pipefail)
   ENTETE=$(cryptsetup luksDump "$PART")
   if grep -q 'online-reencrypt' <<<"$ENTETE"; then
-    journal "Reprise du chiffrement interrompu"
-    cryptsetup reencrypt --batch-mode --resume-only --key-file "$CLE_TMP" "$PART"
+    TEXTE="Reprise du chiffrement de la clé (AES-XTS)"
+    OPTIONS=(--resume-only)
   else
-    journal "Chiffrement du volume (AES-XTS, nouvelle clé maîtresse) — quelques minutes"
-    cryptsetup reencrypt --batch-mode --key-file "$CLE_TMP" \
-      --cipher aes-xts-plain64 --key-size 512 "$PART"
+    TEXTE="Chiffrement de la clé (AES-XTS, nouvelle clé maîtresse)"
+    OPTIONS=(--cipher aes-xts-plain64 --key-size 512)
   fi
+  etape chiffrement "$TEXTE"
+  # Jauge : affichée pendant tout le chiffrement. Code de retour : celui de cryptsetup (pipefail ;
+  # whiptail neutralisé). Messages d'erreur de cryptsetup au journal, pas par-dessus la jauge.
+  cryptsetup reencrypt --batch-mode --progress-json --progress-frequency 1 \
+      --key-file "$CLE_TMP" "${OPTIONS[@]}" "$PART" 2>&3 \
+    | jauge_chiffrement "$(numero chiffrement) : $TEXTE" \
+    | { whiptail --title "$TITRE" --gauge "$TEXTE" 13 74 0 || true; }
   ENTETE=$(cryptsetup luksDump "$PART")
   grep -E '^\s+cipher:' <<<"$ENTETE" >&3 || true
   grep -qE '^\s+cipher:\s+aes-xts-plain64' <<<"$ENTETE" || echec "volume non chiffré après reencrypt"
@@ -176,33 +227,33 @@ if [ "$CHIFFRER" = oui ] && ! fait rechiffrement; then
 fi
 
 if ! fait agrandissement; then
-  journal "Agrandissement à la taille de la clé"
+  etape agrandissement "Agrandissement du système à la taille de la clé"
   sgdisk -e "$DISQUE" >&3 2>&1 || true
   rc=0; growpart "$DISQUE" "$NUM" >&3 2>&1 || rc=$?
   [ "$rc" -le 1 ] || echec "growpart (code $rc)"
-  partx -u "$DISQUE" || true
-  cryptsetup resize --key-file "$CLE_TMP" "$CRYPT"
-  pvresize "/dev/mapper/$CRYPT"
-  lvextend -r -l +100%FREE "$VG/root" || true
+  partx -u "$DISQUE" >&3 2>&1 || true
+  cryptsetup resize --key-file "$CLE_TMP" "$CRYPT" >&3 2>&1
+  pvresize "/dev/mapper/$CRYPT" >&3 2>&1
+  lvextend -r -l +100%FREE "$VG/root" >&3 2>&1 || true
   marquer agrandissement
 fi
 
 # La phrase de l'utilisateur remplace la clé temporaire de l'image
 if [ "$CHIFFRER" = oui ] && ! fait chiffrement; then
-  journal "Phrase secrète enregistrée, retrait de la clé temporaire"
+  etape phrase "Enregistrement de votre phrase secrète, retrait de la clé temporaire"
   F=$(mktemp -p /run)
   printf '%s' "$PHRASE" > "$F"
-  cryptsetup luksAddKey --batch-mode --key-file "$CLE_TMP" "$PART" "$F"
-  cryptsetup open --test-passphrase --key-file "$F" "$PART"
+  cryptsetup luksAddKey --batch-mode --key-file "$CLE_TMP" "$PART" "$F" >&3 2>&1
+  cryptsetup open --test-passphrase --key-file "$F" "$PART" >&3 2>&1
   rm -f "$F"; unset PHRASE
-  cryptsetup luksRemoveKey --batch-mode "$PART" "$CLE_TMP"
+  cryptsetup luksRemoveKey --batch-mode "$PART" "$CLE_TMP" >&3 2>&1
   rm -f "$CLE_TMP"
   sed -i -E "s|^($CRYPT\s+\S+\s+)\S+|\1none|; s/,initramfs//" /etc/crypttab
   marquer chiffrement
 fi
 
-journal "Initramfs (clavier, chiffrement)"
-update-initramfs -u -k all
+etape demarrage "Préparation du démarrage (clavier, chiffrement) — une à deux minutes"
+update-initramfs -u -k all >&3 2>&1
 
 rm -f "$ETAT/a-configurer" "$ETAT"/fait-*
 rm -f "$CONF"

@@ -55,6 +55,10 @@ graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `
 ### Image
 - [x] Phrase secrète tapée au clavier virtuel par le test, question réellement visible (fond bleu détecté)
 - [x] Test d'un **deuxième démarrage** jusqu'à SDDM (phrase LUKS tapée au clavier virtuel)
+- [x] Premier démarrage : étapes affichées (« Étape n sur N ») et **jauge pendant le chiffrement**
+      (pourcentage, débit, temps restant ; débit noté au journal) — 2026-11-02
+- [ ] Mesurer la durée du chiffrement sur clé lente (SanDisk 3.2) grâce au journal ; si trop long,
+      essayer `--hotzone-size` / `--resilience` (à mesurer, ne pas affaiblir la reprise après coupure)
 - [ ] Test du parcours **interactif** sans config.txt (toutes les questions à l'écran).
 - [ ] Test sans chiffrement (`chiffrer=non`).
 - [ ] Vérifier la taille de la clé minimale (16 Go) ; garder l'image compressée sous 2 000 Mio.

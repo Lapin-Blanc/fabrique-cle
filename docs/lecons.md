@@ -71,6 +71,14 @@
 
 - Clavier : sans `KEYMAP=y` (+ `setupcon --save-only`), la phrase LUKS se tape en QWERTY. Validé par
   déverrouillage avec une phrase de test dont les lettres diffèrent entre AZERTY et QWERTY.
+- **`cryptsetup reencrypt --batch-mode` n'affiche aucune progression** (`utils_progress.c` : la ligne
+  « Progress: … » est sautée en mode batch). `--progress-json` est, lui, affiché même en batch, sur la
+  sortie standard : une ligne JSON par intervalle (`device_bytes`, `device_size`, `speed`, `eta_ms` ; les
+  valeurs sont des chaînes). Au premier appel le débit est nul et `eta_ms` vaut n'importe quoi (division
+  par zéro côté C) : ne l'afficher que si le débit est positif. À la reprise (`--resume-only`),
+  `device_bytes` est la position absolue (`rh->progress = rh->offset`) : la jauge repart du bon endroit.
+- Jauge dans un tube (`cryptsetup | filtre | whiptail --gauge`) : si l'affichage meurt, SIGPIPE
+  interromprait le chiffrement → le filtre ignore SIGPIPE et lit tout ; `whiptail … || true`.
 - Une image publiée a une clé maîtresse publique → `cryptsetup reencrypt` obligatoire sur chaque clé.
   Le faire **avant** l'agrandissement (≈ 1 min au lieu de dizaines).
 - **Un volume chiffré dans l'image la rend incompressible** (7,5 Go compressés pour 5,2 Go de système,
