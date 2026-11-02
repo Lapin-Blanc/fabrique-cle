@@ -69,7 +69,7 @@ pub struct EcritureLongue {
     pub mo_s: f64,
     /// Points de la courbe : (Go écrits, Mo/s sur la dernière demi-seconde).
     pub points: Vec<[f32; 2]>,
-    /// Débit des premières secondes et des dernières (Mo/s, médianes).
+    /// Débit du premier plateau (mise en route exclue) et des dernières secondes (Mo/s, médianes).
     pub debit_debut: f64,
     pub debit_fin: f64,
     /// Octets écrits avant que le débit ne chute durablement de moitié (fin du cache SLC).
@@ -200,14 +200,14 @@ fn mediane(v: &[f32]) -> f64 {
     t[t.len() / 2] as f64
 }
 
-/// Repère la fin du cache SLC dans une série de débits : premier point à partir duquel la moyenne
-/// glissante passe sous la moitié du débit initial et la suite reste basse.
-fn chute(debits: &[f32], debut: f64) -> Option<usize> {
+/// Repère la fin du cache SLC dans une série de débits : premier point (à partir de `depuis`)
+/// où la moyenne glissante passe sous la moitié du débit de référence et la suite reste basse.
+fn chute(debits: &[f32], debut: f64, depuis: usize) -> Option<usize> {
     const FENETRE: usize = 4;
     if debits.len() < 12 || debut <= 0.0 {
         return None;
     }
-    (6..=debits.len() - FENETRE).find(|&i| {
+    (depuis.max(6)..=debits.len().saturating_sub(FENETRE)).find(|&i| {
         if (debits[i] as f64) >= debut * 0.5 {
             return false;
         }
@@ -215,6 +215,39 @@ fn chute(debits: &[f32], debut: f64) -> Option<usize> {
         let reste = &debits[i..];
         glissante < debut * 0.5 && mediane(reste) < debut * 0.6
     })
+}
+
+/// Débit du premier plateau : la plus haute médiane sur 5 points consécutifs (2,5 s) dans la
+/// première moitié de la série. Les secondes de mise en route (allocation, écriture différée),
+/// souvent lentes, ne le faussent pas, et un pic isolé non plus.
+fn plateau(debits: &[f32]) -> f64 {
+    const FENETRE: usize = 5;
+    let moitie = &debits[..debits.len().div_ceil(2)];
+    if moitie.len() < FENETRE {
+        return mediane(debits);
+    }
+    moitie.windows(FENETRE).map(mediane).fold(0.0, f64::max)
+}
+
+/// Profil d'une écriture longue : débit de début (plateau), débit de fin, et octets écrits avant
+/// la chute du cache SLC s'il y en a une. `points` : (Go écrits, Mo/s), un point par demi-seconde.
+fn profil(points: &[[f32; 2]]) -> (f64, f64, Option<u64>) {
+    if points.is_empty() {
+        return (0.0, 0.0, None);
+    }
+    let debits: Vec<f32> = points.iter().map(|p| p[1]).collect();
+    let fin = mediane(&debits[debits.len().saturating_sub(6)..]);
+    let reference = plateau(&debits);
+    // Début du plateau : premier point qui en approche le débit (saute la mise en route).
+    let entree = debits
+        .iter()
+        .position(|&d| d as f64 >= reference * 0.8)
+        .unwrap_or(0);
+    let i_chute = chute(&debits, reference, entree + 1);
+    let debut = mediane(&debits[entree..i_chute.unwrap_or(debits.len()).max(entree + 1)]);
+    // La chute commence pendant la tranche `i` : on la situe à la fin de la précédente.
+    let chute_apres = i_chute.map(|i| (points[i - 1][0] as f64 * 1e9) as u64);
+    (debut, fin, chute_apres)
 }
 
 /// Longue écriture séquentielle par blocs de 4 Mio, dans `zone`, pendant `duree` au plus.
@@ -265,9 +298,7 @@ pub fn ecriture_longue(
         .map_err(|e| format!("synchronisation : {e}"))?;
     let duree_s = debut.elapsed().as_secs_f64().max(1e-6);
     let octets = pos - depart;
-    let debit_debut = mediane(&debits[..debits.len().min(6)]);
-    let debit_fin = mediane(&debits[debits.len().saturating_sub(6)..]);
-    let chute_apres = chute(&debits, debit_debut).map(|i| (points[i][0] as f64 * 1e9) as u64);
+    let (debit_debut, debit_fin, chute_apres) = profil(&points);
     Ok(EcritureLongue {
         octets,
         duree_s,
@@ -626,13 +657,51 @@ mod tests {
         // 10 s à 300 Mo/s, puis 20 s à 40 Mo/s (points toutes les 0,5 s).
         let mut d = vec![300.0f32; 20];
         d.extend(vec![40.0; 40]);
-        assert_eq!(chute(&d, 300.0), Some(20));
+        assert_eq!(chute(&d, 300.0, 0), Some(20));
         // Débit stable : pas de chute.
-        assert_eq!(chute(&[100.0; 60], 100.0), None);
+        assert_eq!(chute(&[100.0; 60], 100.0, 0), None);
         // Un creux passager n'est pas une chute.
         let mut d = vec![200.0f32; 40];
         d[15..19].copy_from_slice(&[50.0; 4]);
-        assert_eq!(chute(&d, 200.0), None);
+        assert_eq!(chute(&d, 200.0, 0), None);
+    }
+
+    /// Mesure réelle (v2026.11.4, SSD USB SSK, pont VIA VL715) : 2 s de mise en route lentes,
+    /// plateau ~360 Mo/s, chute à ~40 Mo/s après ~15,3 Go.
+    #[test]
+    fn chute_apres_demarrage_lent() {
+        let mesure = "0.02;27 0.08;28 0.14;26 0.21;28 0.70;356 1.43;361 2.15;359 2.89;368 \
+            3.63;369 4.40;385 5.15;376 5.91;373 6.66;367 7.38;345 8.10;355 8.81;352 9.54;368 \
+            10.26;362 10.98;349 11.71;360 12.43;367 13.17;353 13.86;355 14.58;354 15.28;350 \
+            15.38;18 15.49;11 15.52;11 16.15;234 16.27;55 16.38;52 16.50;51 16.63;56 16.74;55 \
+            16.87;55 16.99;60 17.09;50 17.19;43 17.29;44 17.39;39";
+        let mut points: Vec<[f32; 2]> = mesure
+            .split_whitespace()
+            .map(|p| {
+                let (go, mo) = p.split_once(';').unwrap();
+                [go.parse().unwrap(), mo.parse().unwrap()]
+            })
+            .collect();
+        // Puis ~38-42 Mo/s jusqu'à 21,14 Go (0,02 Go par demi-seconde).
+        let mut go = 17.39f32;
+        let mut k = 0;
+        while go < 21.14 {
+            go += 0.02;
+            points.push([go, 38.0 + (k % 5) as f32]);
+            k += 1;
+        }
+        let (debut, fin, chute_apres) = profil(&points);
+        let b = chute_apres.expect("chute non repérée") as f64 / 1e9;
+        assert!((15.2..15.4).contains(&b), "chute après {b} Go");
+        assert!((340.0..380.0).contains(&debut), "début {debut}");
+        assert!((36.0..44.0).contains(&fin), "fin {fin}");
+        // Sans la chute, le même démarrage lent ne fait pas croire à une chute.
+        points.truncate(25);
+        let (debut, _, chute_apres) = profil(&points);
+        assert_eq!(chute_apres, None);
+        assert!((340.0..380.0).contains(&debut), "début {debut}");
+        // Écriture trop courte pour donner un seul point.
+        assert_eq!(profil(&[]), (0.0, 0.0, None));
     }
 
     /// Parcours complet sur une clé simulée : chaque étape produit des chiffres cohérents.
