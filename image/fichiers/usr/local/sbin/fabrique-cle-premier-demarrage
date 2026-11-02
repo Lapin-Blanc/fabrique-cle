@@ -132,6 +132,15 @@ fi
 if ! fait compte; then
   journal "Compte $IDENT"
   getent passwd "$IDENT" >/dev/null || useradd -m -s /bin/bash -c "$NOM" "$IDENT"
+  # ~/.cache en RAM : caches du navigateur et miniatures n'usent plus la clé (vidé à chaque démarrage).
+  # tmpfs : n'occupe que ce qu'il contient, plafonné à 1 Gio.
+  if ! grep -q " /home/$IDENT/.cache " /etc/fstab; then
+    printf 'tmpfs /home/%s/.cache tmpfs rw,nosuid,nodev,noatime,size=1G,mode=0700,uid=%s,gid=%s 0 0\n' \
+      "$IDENT" "$(id -u "$IDENT")" "$(id -g "$IDENT")" >> /etc/fstab
+  fi
+  install -d -m 700 -o "$IDENT" -g "$(id -gn "$IDENT")" "/home/$IDENT/.cache"
+  systemctl daemon-reload || true
+  mountpoint -q "/home/$IDENT/.cache" || mount "/home/$IDENT/.cache" || true   # dès la 1re session
   for g in sudo audio video plugdev netdev bluetooth lpadmin scanner; do
     getent group "$g" >/dev/null && usermod -aG "$g" "$IDENT"
   done

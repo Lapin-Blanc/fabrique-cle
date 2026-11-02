@@ -43,6 +43,26 @@
   tape désormais au clavier virtuel (`sendkey`), seulement quand la capture d'écran est majoritairement
   bleue (fond whiptail) : une question invisible fait échouer le test.
 
+## Clé lente (USB sans UAS) — essai du 2026-11-01 (SanDisk 3.2, `usb-storage`, 13 Mo/s en écriture)
+
+- Mesures (passation de la session menée sur la clé) : lecture 150 Mo/s (4k : 16 Mo/s), écriture
+  13 Mo/s (4k synchrone : 0,4 Mo/s, ~100 IOPS), `nr_requests=2`, pas de TRIM, vue `rotational=1`.
+  ~10 % du temps bloqué en E/S avant réglages, ~3 % après. Démarrage 45,8 s (firmware 11,7 · GRUB 12,3
+  · noyau + saisie LUKS 15,8 · espace utilisateur 6,0).
+- Le frein est l'écriture : une requête à la fois, 0,4 Mo/s en petits blocs. Linux accumulait ~1,4 Go
+  à écrire et le bureau se figeait. Écriture différée bornée (`vm.dirty_*_bytes`) : plus de gel.
+- Règle udev BFQ : numérotée **61**, sinon elle passe avant `60-persistent-storage` qui définit `ID_BUS`.
+- `~/.cache` en tmpfs suffit pour les caches de navigateur. **profile-sync-daemon écarté** : jusqu'à
+  1 h de profil perdue si la clé est arrachée, et il faut le maintenir par navigateur.
+- `commit=30` plutôt que 60 : compromis entre écritures et données perdues en cas d'arrachage.
+- Démarrage : 12 s dans GRUB à charger un `initrd` de 133 Mo depuis la clé lente (piste : en retirer
+  les pilotes graphiques et leurs firmwares).
+
+- Exclure un navigateur ne suffit pas : `webext-plasma-browser-integration` (recommandé par Plasma)
+  recommande « firefox-esr | firefox | chromium » ; exclure Firefox ferait prendre Chromium.
+  Le garde-fou de `construire-image.sh` l'a détecté (Firefox installé malgré son retrait de la liste).
+- `fstrim.timer` conservé : sans effet sur une clé `usb-storage`, utile sur un SSD USB en UAS.
+
 ## Chiffrement
 
 - Clavier : sans `KEYMAP=y` (+ `setupcon --save-only`), la phrase LUKS se tape en QWERTY. Validé par

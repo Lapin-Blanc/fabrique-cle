@@ -1,0 +1,22 @@
+#!/bin/sh
+# Fabrique-Clé — une seule fois par utilisateur, à la première session Plasma :
+# fond d'écran « image du jour » (Bing). L'utilisateur peut ensuite le changer librement.
+M="${XDG_CONFIG_HOME:-$HOME/.config}/fabrique-cle-fond-du-jour"
+[ -e "$M" ] && exit 0
+JS='desktops().forEach(function (d) {
+  d.wallpaperPlugin = "org.kde.potd";
+  d.currentConfigGroup = ["Wallpaper", "org.kde.potd", "General"];
+  d.writeConfig("Provider", "bing");
+  d.reloadConfig();
+});'
+# plasmashell n'est pas forcément prêt au lancement de la session : réessayer une minute
+i=0
+while [ $i -lt 30 ]; do
+  if busctl --user call org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell evaluateScript s "$JS" >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$M")" && touch "$M"
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 2
+done
+exit 0

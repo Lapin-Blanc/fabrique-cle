@@ -32,6 +32,17 @@ Fichier image de 10 Gio (creux), monté en loop, dans un **espace de montage pri
   la **clé temporaire** de l'image est incluse dans l'initramfs (`KEYFILE_PATTERN`) : le 1er démarrage ne demande rien.
 - GRUB : `grub-install --uefi-secure-boot --no-nvram --force-extra-removable`, debconf
   `force_efi_extra_removable=true`, `update_nvram=false` ; hook APT qui supprime `EFI/BOOT/fbx64.efi`.
+- Navigateur : **Brave** seul (dépôt officiel, trousseau versionné dans `image/fichiers/usr/share/keyrings/`,
+  tenu à jour ensuite par le paquet `brave-keyring`), par défaut via `/etc/xdg/mimeapps.list` et
+  `kdeglobals` ; Konqueror et Firefox exclus. `plasma-wallpapers-addons` : fond
+  « image du jour » (Bing) appliqué une fois à la 1re session (`/etc/xdg/autostart`, `evaluateScript`).
+- Réglages pour clé USB lente, neutres sur un SSD rapide : écriture différée bornée (16/64 Mio),
+  zram favorisé (`swappiness=150`, `page-cluster=0`), BFQ + lecture anticipée 512 Ko pour les disques
+  USB (udev `61-…`), racine en `noatime,commit=30`, journal 64 Mo synchronisé toutes les 30 s,
+  `~/.cache` en tmpfs (ajouté au premier démarrage), GRUB à 1 s.
+- Mises à jour : **aucune automatique** (`apt-daily*` masqués, `fwupd-refresh` désactivé) ; Discover
+  les signale, l'utilisateur les lance quand cela l'arrange. Désactivés aussi : `NetworkManager-wait-online`,
+  `ModemManager`, `smartmontools`. `fstrim.timer` reste actif (TRIM utile sur SSD USB en UAS).
 - RTC en heure locale (`/etc/adjtime` LOCAL), `systemd-timesyncd` (heure réseau), fuseau Europe/Brussels, zram zstd 50 %, `fstrim.timer`.
 - `machine-id` vide (régénéré par clé), pas de compte utilisateur (créé au 1er démarrage), root verrouillé.
 - Cache APT **hors de l'image** (montage lié d'un dossier de l'hôte sur `/var/cache/apt/archives`, aussi
