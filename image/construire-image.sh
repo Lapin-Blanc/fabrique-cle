@@ -338,6 +338,17 @@ rm -rf "$MNT/tmp/"* "$MNT/var/log/"*.log
 journal "Contrôles"
 K=$(cd "$MNT" && ls boot/initrd.img-* | sort -V | tail -1)
 chroot "$MNT" lsinitramfs "/$K" | grep -E 'cryptroot/(crypttab|keyfiles)|boottime.kmap' | sort
+# Taille de l'initramfs, lue depuis la clé par le firmware à chaque démarrage (lent sur clé USB) :
+# détail des plus gros contenus, pour le garder léger.
+chroot "$MNT" sh -c '
+  i=/'"$K"'; d=$(mktemp -d); unmkinitramfs "$i" "$d"
+  echo "initramfs : $(du -m "$i" | cut -f1) Mo compressé, contenu :"
+  du -sm "$d"/* | sed "s|$d/||"
+  r=$d/main; [ -d "$r" ] || r=$d
+  echo "-- plus gros firmwares :"; du -sm "$r"/usr/lib/firmware/* 2>/dev/null | sort -rn | head -12 | sed "s|$r||"
+  echo "-- plus gros pilotes :"; du -sm "$r"/usr/lib/modules/*/kernel/drivers/* 2>/dev/null | sort -rn | head -12 | sed "s|$r/usr/lib/modules/[^/]*/kernel/||"
+  echo "-- sous-dossiers de drivers/gpu :"; du -sm "$r"/usr/lib/modules/*/kernel/drivers/gpu/drm/* 2>/dev/null | sort -rn | head -8 | sed "s|$r/usr/lib/modules/[^/]*/kernel/||"
+  rm -rf "$d"'
 ls -l "$MNT/boot/efi/EFI/BOOT" "$MNT/boot/efi/EFI/debian"
 cmp "$MNT/boot/efi/EFI/BOOT/BOOTX64.EFI" "$MNT/boot/efi/EFI/debian/shimx64.efi" && echo "BOOTX64.EFI = shim"
 cmp "$MNT/boot/efi/EFI/BOOT/grubx64.efi" "$MNT/boot/efi/EFI/debian/grubx64.efi" && echo "grubx64.efi identique à EFI/debian"
