@@ -2,6 +2,9 @@
 //! (clé, image, personnalisation, état, bouton).
 
 use crate::config::{CLAVIERS, LANGUES, MOT_DE_PASSE_MIN, Personnalisation};
+use crate::diagnostic::analyse::{Analyse, Reglages};
+use crate::diagnostic::materiel::Materiel;
+use crate::diagnostic::mesures::{self, Mesures};
 use crate::disques::{self, Disque};
 use crate::releases::{self, Version};
 use crate::suivi::{ANNULE, Suivi};
@@ -14,10 +17,16 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+mod diagnostic;
+
 enum Evenement {
     Etape(String),
     Progres(f32, String),
     Fin(Result<String, String>),
+    /// Fin des mesures du diagnostic.
+    Mesures(Result<Box<Mesures>, String>),
+    /// Fin de l'analyse complète.
+    Analyse(Result<Box<Analyse>, String>),
 }
 
 /// Suivi relié à la fenêtre par un canal.
@@ -48,7 +57,17 @@ impl Suivi for SuiviFenetre {
     }
 }
 
+/// Nature du travail en cours.
+enum Nature {
+    Fabrication,
+    /// Mesures en lecture de cette clé.
+    Diagnostic(Disque),
+    /// Analyse complète (destructive) de cette clé.
+    Analyse(Disque),
+}
+
 struct Travail {
+    nature: Nature,
     rx: Receiver<Evenement>,
     annuler: Arc<AtomicBool>,
     etape: String,
@@ -63,12 +82,40 @@ enum EtatVersions {
 }
 
 #[derive(PartialEq, Clone, Copy)]
+enum Onglet {
+    Fabriquer,
+    Diagnostic,
+}
+
+/// État de l'onglet Diagnostic (mémorisé par clé : changer de clé n'efface pas les mesures).
+#[derive(Default)]
+struct EtatDiagnostic {
+    /// Identification de la clé affichée (relue quand la sélection change).
+    materiel: Option<(Disque, Materiel)>,
+    mesures: Vec<(Disque, Mesures)>,
+    analyses: Vec<(Disque, Analyse)>,
+    reglages: Reglages,
+    /// Fenêtre de confirmation de l'analyse complète ouverte.
+    confirmer_analyse: bool,
+    /// Fenêtre de confirmation de la mesure dans un fichier d'essai ouverte.
+    confirmer_fichier: bool,
+    /// Clés USB qui portent le système en cours (Linux) : proposées au diagnostic seulement.
+    systeme: Vec<Disque>,
+    /// Volumes montés de la clé affichée (relus régulièrement).
+    emplacements: Option<(Disque, Vec<disques::Emplacement>, Instant)>,
+    erreur: Option<String>,
+}
+
+#[derive(PartialEq, Clone, Copy)]
 enum ModeImage {
     Publiee,
     Locale,
 }
 
 pub struct Appli {
+    onglet: Onglet,
+    diag: EtatDiagnostic,
+
     disques: Vec<Disque>,
     erreur_disques: Option<String>,
     disque: Option<Disque>,
@@ -110,6 +157,8 @@ impl Appli {
             )
         });
         let mut a = Self {
+            onglet: Onglet::Fabriquer,
+            diag: EtatDiagnostic::default(),
             disques: Vec::new(),
             erreur_disques: None,
             disque: None,
@@ -132,11 +181,15 @@ impl Appli {
     /// Relit la liste des clés ; garde la sélection si la même clé est toujours là.
     fn detecter(&mut self) {
         self.derniere_detection = Instant::now();
+        self.diag.systeme = disques::lister_systeme_usb();
         match disques::lister() {
             Ok(l) => {
                 self.erreur_disques = None;
+                // La clé système n'est gardée que dans l'onglet Diagnostic.
+                let systeme_permis = self.onglet == Onglet::Diagnostic;
                 if let Some(d) = &self.disque
                     && !l.contains(d)
+                    && !(systeme_permis && self.diag.systeme.contains(d))
                 {
                     self.disque = None;
                 }
@@ -160,10 +213,17 @@ impl Appli {
         }
     }
 
+    /// La clé choisie porte le système en cours (diagnostic seulement, jamais de fabrication).
+    fn disque_systeme(&self) -> bool {
+        self.disque
+            .as_ref()
+            .is_some_and(|d| self.diag.systeme.contains(d))
+    }
+
     /// Ce qui empêche de démarrer (vide = prêt).
     fn obstacles(&self) -> Vec<String> {
         let mut o = Vec::new();
-        if self.disque.is_none() {
+        if self.disque.is_none() || self.disque_systeme() {
             o.push("Choisissez une clé USB.".to_string());
         }
         match self.mode {
@@ -224,6 +284,7 @@ impl Appli {
         });
         self.resultat = None;
         self.travail = Some(Travail {
+            nature: Nature::Fabrication,
             rx,
             annuler,
             etape: "Démarrage".into(),
@@ -232,8 +293,40 @@ impl Appli {
         });
     }
 
+    /// Lance les mesures en lecture de la clé choisie (onglet Diagnostic).
+    fn demarrer_diagnostic(&mut self, ctx: &egui::Context) {
+        let Some(disque) = self.disque.clone() else {
+            return;
+        };
+        let (tx, rx) = channel();
+        let annuler = Arc::new(AtomicBool::new(false));
+        let suivi = SuiviFenetre {
+            tx: tx.clone(),
+            annuler: annuler.clone(),
+            ctx: ctx.clone(),
+            dernier: Mutex::new(Instant::now()),
+        };
+        let d = disque.clone();
+        std::thread::spawn(move || {
+            let r = mesures::mesurer_cle(&d, &suivi);
+            let _ = tx.send(Evenement::Mesures(r.map(Box::new)));
+            suivi.ctx.request_repaint();
+        });
+        self.diag.erreur = None;
+        self.travail = Some(Travail {
+            nature: Nature::Diagnostic(disque),
+            rx,
+            annuler,
+            etape: "Démarrage des mesures".into(),
+            fraction: 0.0,
+            detail: String::new(),
+        });
+    }
+
     fn recevoir(&mut self) {
         let mut fin = None;
+        let mut mesures = None;
+        let mut analyse = None;
         if let Some(t) = &mut self.travail {
             while let Ok(ev) = t.rx.try_recv() {
                 match ev {
@@ -247,8 +340,44 @@ impl Appli {
                         t.detail = d;
                     }
                     Evenement::Fin(r) => fin = Some(r),
+                    Evenement::Mesures(r) => mesures = Some(r),
+                    Evenement::Analyse(r) => analyse = Some(r),
                 }
             }
+        }
+        if let Some(r) = mesures {
+            if let Some(Travail {
+                nature: Nature::Diagnostic(d),
+                ..
+            }) = self.travail.take()
+            {
+                match r {
+                    Ok(m) => {
+                        self.diag.mesures.retain(|(x, _)| *x != d);
+                        self.diag.mesures.push((d, *m));
+                    }
+                    Err(e) => self.diag.erreur = Some(e),
+                }
+            }
+            return;
+        }
+        if let Some(r) = analyse {
+            if let Some(Travail {
+                nature: Nature::Analyse(d),
+                ..
+            }) = self.travail.take()
+            {
+                match r {
+                    Ok(a) => {
+                        self.diag.analyses.retain(|(x, _)| *x != d);
+                        self.diag.analyses.push((d, *a));
+                    }
+                    Err(e) => self.diag.erreur = Some(e),
+                }
+            }
+            // La table de partitions a changé : relire la liste des clés.
+            self.detecter();
+            return;
         }
         if let Some(r) = fin {
             self.travail = None;
@@ -323,40 +452,67 @@ impl Appli {
         });
     }
 
-    fn ui_cle(&mut self, ui: &mut egui::Ui) {
-        Self::carte(ui, 1, "Clé USB", |ui| {
-            ui.horizontal(|ui| {
-                let texte = self
-                    .disque
-                    .as_ref()
-                    .map(|d| d.libelle())
-                    .unwrap_or_else(|| {
-                        if self.disques.is_empty() {
-                            "Aucune clé USB détectée — branchez-en une".into()
-                        } else {
-                            "Choisir la clé…".into()
-                        }
-                    });
-                let largeur = ui.available_width() - 110.0;
-                egui::ComboBox::from_id_salt("disque")
-                    .width(largeur)
-                    .selected_text(texte)
-                    .show_ui(ui, |ui| {
-                        for d in &self.disques {
-                            ui.selectable_value(&mut self.disque, Some(d.clone()), d.libelle());
-                        }
-                    });
-                if ui
-                    .add_sized([100.0, 30.0], egui::Button::new("Actualiser"))
-                    .on_hover_text("Rechercher de nouveau les clés USB")
-                    .clicked()
-                {
-                    self.detecter();
+    /// Liste déroulante des clés et bouton « Actualiser » (partagés par les deux onglets).
+    fn choix_disque(&mut self, ui: &mut egui::Ui) {
+        let systeme = self.disque_systeme();
+        let texte = self
+            .disque
+            .as_ref()
+            .map(|d| {
+                if systeme {
+                    format!("{} — système en cours", d.libelle())
+                } else {
+                    d.libelle()
+                }
+            })
+            .unwrap_or_else(|| {
+                if self.disques.is_empty() {
+                    "Aucune clé USB détectée — branchez-en une".into()
+                } else {
+                    "Choisir la clé…".into()
                 }
             });
-            if let Some(e) = &self.erreur_disques {
-                ui.colored_label(ui.visuals().error_fg_color, e);
+        // De droite à gauche : le bouton d'abord, puis la liste dans la place restante. Son
+        // libellé (modèle, taille, n° de série, chemin) peut être plus long que la fenêtre : il est
+        // tronqué, et affiché en entier au survol.
+        let ligne = egui::vec2(ui.available_width(), 30.0);
+        let droite_a_gauche = egui::Layout::right_to_left(egui::Align::Center);
+        ui.allocate_ui_with_layout(ligne, droite_a_gauche, |ui| {
+            if ui
+                .add_sized([100.0, 30.0], egui::Button::new("Actualiser"))
+                .on_hover_text("Rechercher de nouveau les clés USB")
+                .clicked()
+            {
+                self.detecter();
             }
+            let r = egui::ComboBox::from_id_salt("disque")
+                .width(ui.available_width())
+                .truncate()
+                .selected_text(texte.clone())
+                .show_ui(ui, |ui| {
+                    for d in &self.disques {
+                        ui.selectable_value(&mut self.disque, Some(d.clone()), d.libelle());
+                    }
+                    if self.onglet == Onglet::Diagnostic {
+                        for d in &self.diag.systeme {
+                            ui.selectable_value(
+                                &mut self.disque,
+                                Some(d.clone()),
+                                format!("{} — système en cours", d.libelle()),
+                            );
+                        }
+                    }
+                });
+            r.response.on_hover_text(texte);
+        });
+        if let Some(e) = &self.erreur_disques {
+            ui.colored_label(ui.visuals().error_fg_color, e);
+        }
+    }
+
+    fn ui_cle(&mut self, ui: &mut egui::Ui) {
+        Self::carte(ui, 1, "Clé USB", |ui| {
+            self.choix_disque(ui);
             if let Some(d) = &self.disque
                 && d.taille < 15_000_000_000
             {
@@ -402,6 +558,7 @@ impl Appli {
                             };
                             let r = egui::ComboBox::from_id_salt("version")
                                 .width(ui.available_width())
+                                .truncate()
                                 .selected_text(v.get(self.version).map(texte).unwrap_or_default())
                                 .show_ui(ui, |ui| {
                                     for (i, x) in v.iter().enumerate() {
@@ -559,6 +716,25 @@ impl Appli {
                     .corner_radius(6)
                     .animate(true),
             );
+        } else if self.onglet == Onglet::Diagnostic {
+            match &self.diag.erreur {
+                Some(m) if m == ANNULE => Self::encadre(ui, ui.visuals().weak_text_color(), m),
+                Some(m) => Self::encadre(ui, ui.visuals().error_fg_color, m),
+                None if self.disque.is_none() => {
+                    ui.label(
+                        egui::RichText::new("Pour continuer : choisissez une clé USB.").weak(),
+                    );
+                }
+                None => {
+                    ui.label(
+                        egui::RichText::new(
+                            "Mesures en lecture seule : rien n'est écrit sur la clé. \
+                             Seule l'analyse complète (carte 5) l'efface.",
+                        )
+                        .weak(),
+                    );
+                }
+            }
         } else if let Some(r) = &self.resultat {
             match r {
                 Ok(m) => Self::encadre(ui, theme::vert(ui), &format!("✔  {m}")),
@@ -625,6 +801,21 @@ impl Appli {
                 .clicked()
             {
                 t.annuler.store(true, Ordering::Relaxed);
+            }
+        } else if self.onglet == Onglet::Diagnostic {
+            let b = egui::Button::new(
+                egui::RichText::new("Mesurer la clé (≈ 30 s, lecture seule)")
+                    .family(theme::gras())
+                    .size(16.0)
+                    .color(egui::Color32::WHITE),
+            )
+            .fill(theme::accent(ui))
+            .corner_radius(8);
+            let r = ui
+                .add_enabled_ui(self.disque.is_some(), |ui| ui.add_sized([largeur, 42.0], b))
+                .inner;
+            if r.clicked() {
+                self.demarrer_diagnostic(ui.ctx());
             }
         } else {
             let pret = self.obstacles().is_empty();
@@ -714,19 +905,32 @@ impl eframe::App for Appli {
                         })
                         .show(ui, |ui| {
                             self.ui_entete(ui);
+                            ui.add_space(10.0);
+                            self.ui_onglets(ui);
                             ui.add_space(12.0);
-                            ui.add_enabled_ui(!occupe, |ui| {
-                                self.ui_cle(ui);
-                                ui.add_space(10.0);
-                                self.ui_image(ui);
-                                ui.add_space(10.0);
-                                self.ui_perso(ui);
-                            });
+                            match self.onglet {
+                                Onglet::Fabriquer => {
+                                    ui.add_enabled_ui(!occupe, |ui| {
+                                        self.ui_cle(ui);
+                                        ui.add_space(10.0);
+                                        self.ui_image(ui);
+                                        ui.add_space(10.0);
+                                        self.ui_perso(ui);
+                                    });
+                                }
+                                Onglet::Diagnostic => self.ui_diagnostic(ui, occupe),
+                            }
                         });
                 });
             });
         if self.confirmation {
             self.ui_confirmation(&ctx);
+        }
+        if self.diag.confirmer_analyse {
+            self.ui_confirmation_analyse(&ctx);
+        }
+        if self.diag.confirmer_fichier {
+            self.ui_confirmation_fichier(&ctx);
         }
     }
 

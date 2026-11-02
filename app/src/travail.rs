@@ -1,5 +1,5 @@
 //! Écriture complète d'une clé : image, vérification, `config.txt`.
-//! Sous Linux sans droits root, ce travail est confié à l'assistant (`assistant.rs`) via pkexec.
+//! Sous Linux sans droits root, ce travail est confié à l'assistant (`assistant.rs`) via pkexec (ou run0).
 
 use crate::disques::{self, Disque};
 use crate::ecriture::{Source, ecrire_image, verifier};

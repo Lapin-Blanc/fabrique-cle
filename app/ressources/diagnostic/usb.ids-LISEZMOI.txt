@@ -1,0 +1,18 @@
+usb.ids.zst — base communautaire des identifiants USB (fabricants et produits)
+
+Source : http://www.linux-usb.org/usb.ids (la base utilisée par lsusb), version 2026.06.26.
+Mainteneur : Stephen J. Gowdy, avec les contributions de nombreux bénévoles.
+Licence (d'après http://www.linux-usb.org/usb-ids.html) : « The contents of the database and the
+generated files can be distributed under the terms of either the GNU General Public License
+(version 2 or later) or of the 3-clause BSD License. »
+
+Seules les sections fabricants et produits sont gardées (pas les interfaces ni les classes), puis
+le fichier est compressé avec zstd. Pour le mettre à jour (Linux) :
+
+  curl -sS -o usb.ids http://www.linux-usb.org/usb.ids
+  awk '/^# List of known device classes/{exit} {print}' usb.ids | grep -v "^		" > produits.ids
+  zstd -19 -f -o usb.ids.zst produits.ids
+
+C'est une base communautaire : les noms de produits y sont parfois approximatifs ou faux.
+L'application l'affiche avec l'étiquette « lu » et la confronte à sa propre table
+(fabricants-usb.txt) et aux mesures.

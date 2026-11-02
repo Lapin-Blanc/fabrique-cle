@@ -1,0 +1,303 @@
+# Fabrique-Clé — textes explicatifs de l'onglet Diagnostic.
+#
+# Ce fichier est intégré à l'application à la compilation : on peut le réécrire librement
+# (adapter au cours, simplifier, traduire) sans toucher au code Rust.
+#
+# Format :
+#   [clé]           ce que c'est
+#   [clé.pourquoi]  pourquoi c'est important pour un système qui tourne depuis la clé
+# Les paragraphes (et les éléments d'une liste) sont séparés par une ligne vide ;
+# les lignes commençant par # sont ignorées.
+# Un test (`cargo test`) vérifie que chaque clé utilisée par l'application existe ici.
+
+[introduction]
+Une clé USB ordinaire est conçue pour copier de temps en temps de gros fichiers. Un système
+d'exploitation fait tout autre chose : il lit et écrit sans cesse de petits blocs, éparpillés sur
+toute la clé. Deux clés qui affichent le même débit sur l'emballage peuvent donc donner des
+systèmes très différents, l'un fluide, l'autre inutilisable.
+
+Ce diagnostic examine la clé sous cet angle. Il ne modifie rien : l'identification se contente de
+lire ce que la clé et le système déclarent, et les mesures ne font que des lectures. Une clé
+Fabrique-Clé déjà en service peut donc être examinée sans risque.
+
+[certitudes]
+Chaque information porte une étiquette qui dit d'où elle vient.
+
+« Lu » : déclaré par la clé ou par le système. C'est fiable pour la liaison et le protocole,
+mais une clé peut mentir sur sa capacité, et le nom d'un fabricant ne dit pas quelle puce a été
+utilisée.
+
+« Mesuré » : obtenu en chronométrant de vraies lectures sur la clé. C'est la référence.
+
+« Déduit » : une interprétation raisonnable des mesures, pas une certitude. Par USB, une clé ne
+dit presque rien de son intérieur : ni son contrôleur, ni son type de mémoire, ni son usure.
+
+« Non mesuré » : demande des écritures, donc l'effacement de la clé : c'est l'objet de
+l'analyse complète.
+
+[categories]
+Pour cet usage, on peut ranger les clés en quatre familles.
+
+A. Clé basique (USB 2 ou entrée de gamme USB 3) : quelques Ko/s en écriture aléatoire, ni TRIM
+ni UAS. Inutilisable pour un système.
+
+B. Clé « rapide » grand public : 0,1 à 1 Mo/s en écriture aléatoire, ni TRIM ni UAS. Utilisable
+grâce aux réglages de l'image Fabrique-Clé (écritures différées limitées, caches en mémoire…),
+mais le bureau peut se figer pendant les écritures.
+
+C. Clé à contrôleur de SSD (gammes « Pro » ou « SSD », anciennes clés certifiées Windows To Go) :
+10 à 50 Mo/s et plus en écriture aléatoire, UAS et souvent TRIM. Sensation proche d'un SSD.
+
+D. SSD externe ou boîtier NVMe en USB : 30 à 100 Mo/s et plus, UAS et TRIM, endurance d'un vrai
+SSD. Excellent.
+
+La frontière entre B et C se joue surtout sur l'écriture aléatoire. Les mesures en lecture seule
+ne donnent qu'une estimation ; l'analyse complète, qui écrit sur la clé, permet de la classer.
+
+[controleur]
+Le contrôleur est la puce qui gère la mémoire flash : il traduit les adresses demandées par le PC
+en emplacements physiques, répartit l'usure, regroupe les écritures et recycle les blocs effacés.
+
+Les clés ordinaires utilisent des contrôleurs simples, optimisés pour les gros fichiers et les
+chiffres de l'emballage, souvent sans mémoire tampon. Les clés « SSD » et les SSD externes
+utilisent un vrai contrôleur de SSD, parfois un SSD complet relié à un pont USB dans le même
+boîtier.
+
+L'identifiant USB (VID) donne parfois un indice : quand la marque a laissé celui du fabricant de la
+puce (Phison, Silicon Motion, Alcor…), ou quand c'est celui d'un pont USB-SATA ou USB-NVMe
+(JMicron, ASMedia, Realtek), signe qu'un SSD se trouve derrière. Le plus souvent, on ne voit que la
+marque, qui peut changer de puce d'une série à l'autre sans changer d'identifiant.
+
+[controleur.pourquoi]
+C'est le critère qui sépare le plus les modèles. Un contrôleur de clé ordinaire s'effondre sur les
+petites écritures éparpillées : c'est lui qui fige le bureau. Comme on ne peut pas le lire, on le
+reconnaît à son comportement : protocole UAS, TRIM, capacité à traiter plusieurs lectures à la
+fois, latences régulières.
+
+[protocole]
+Le protocole est la façon dont le PC et la clé s'échangent les commandes de lecture et d'écriture.
+
+BOT (« Bulk-Only Transport », pilote usb-storage sous Linux, USBSTOR sous Windows) : le protocole
+historique. Une seule commande à la fois : le PC attend la réponse avant d'envoyer la suivante. Pas
+de TRIM.
+
+UAS (« USB Attached SCSI », pilote uas sous Linux, UASPStor sous Windows) : plusieurs commandes en
+attente en même temps (une file de commandes), que la clé peut traiter dans l'ordre qui l'arrange.
+TRIM possible.
+
+[protocole.pourquoi]
+Un système envoie sans cesse des demandes simultanées (programmes qui démarrent, journal, cache du
+navigateur…). En BOT, elles font la queue une par une ; en UAS, la clé les traite en parallèle.
+
+Le protocole est aussi un bon indice du contrôleur : une clé qui ne fonctionne qu'en BOT a presque
+toujours un contrôleur de clé ordinaire, alors que les clés à contrôleur de SSD et les SSD externes
+ont presque toutes l'UAS.
+
+[liaison]
+La liaison est la vitesse négociée entre la clé et le port du PC au moment du branchement :
+480 Mbit/s en USB 2, 5 Gbit/s en USB 3.2 Gen 1 (souvent appelé USB 3.0), 10 Gbit/s en Gen 2.
+
+Elle dépend des deux côtés et de ce qu'il y a entre eux. Une clé USB 3 branchée sur un port USB 2,
+une rallonge ou un concentrateur USB 2, ou un connecteur mal enfoncé, fonctionne en USB 2.
+
+[liaison.pourquoi]
+En USB 2, tout débit est plafonné vers 35 à 40 Mo/s, et chaque commande prend plus de temps : même
+une excellente clé devient lente. Ce n'est pas un défaut de la clé, il suffit de changer de port.
+Les ports USB 3 sont souvent bleus ou marqués « SS » (SuperSpeed).
+
+[trim]
+Quand on supprime un fichier, le système de fichiers note simplement que la place est libre ; la
+clé, elle, n'en sait rien et continue de conserver ces données. La commande TRIM (ou « discard »)
+prévient la clé que ces blocs ne servent plus.
+
+[trim.pourquoi]
+Sans TRIM, le contrôleur croit la clé de plus en plus pleine : il recopie inutilement des données
+mortes pour libérer de la place, ce qui ralentit les écritures et use la mémoire. Avec TRIM, il
+garde des blocs prêts à l'emploi.
+
+Sur une clé USB, TRIM n'est possible qu'en UAS, et seulement si le contrôleur le gère : c'est un
+signe fort de contrôleur de type SSD. L'image Fabrique-Clé l'active (fstrim chaque semaine,
+option discard du chiffrement) ; il ne prend effet que sur une clé qui le gère.
+
+[lecture_aleatoire]
+On lit des blocs de 4 Ko (la taille d'une page mémoire et d'un bloc du système de fichiers) à des
+emplacements tirés au hasard sur toute la clé, un à la fois, pendant quelques secondes. On compte
+les lectures par seconde (IOPS) et on mesure le temps de chacune.
+
+[lecture_aleatoire.pourquoi]
+C'est ainsi que travaille un système : lancer un programme, c'est lire des centaines de petits
+fichiers éparpillés. Ce chiffre conditionne le temps de démarrage du système et des applications,
+bien plus que le débit séquentiel.
+
+En lecture, les clés ordinaires s'en sortent souvent correctement (1 000 à 3 000 lectures par
+seconde) ; c'est en écriture aléatoire qu'elles s'effondrent, ce que mesurera l'analyse complète.
+
+[parallelisme]
+On répète la lecture aléatoire avec 8 lectures lancées en même temps, et on compare au test « une
+à la fois ».
+
+[parallelisme.pourquoi]
+Si le débit augmente nettement, la clé sait traiter plusieurs demandes à la fois : c'est le cas
+des contrôleurs de SSD, qui répartissent le travail sur plusieurs puces de mémoire, et cela exige
+le protocole UAS. Si le débit ne bouge pas, les demandes font la queue : protocole BOT ou
+contrôleur simple. C'est une mesure directe de ce que le protocole et le contrôleur permettent
+réellement.
+
+[latence]
+La latence est le temps que met une lecture à aboutir. On regarde la valeur typique (médiane), mais
+surtout les pires cas : le 99e centile (une lecture sur cent est plus lente que lui) et le maximum.
+L'histogramme montre comment les temps se répartissent.
+
+[latence.pourquoi]
+Ce sont les pires cas que l'on ressent : un programme qui attend une lecture de 50 ms reste figé
+pendant ce temps. Une bonne clé répond régulièrement en moins d'une milliseconde ; des pics
+fréquents de plusieurs dizaines de millisecondes trahissent un contrôleur occupé à réorganiser sa
+mémoire.
+
+[regularite]
+On compare le temps typique d'une lecture (la médiane) à la moyenne. Sur une clé régulière, les
+deux sont proches. Quand la moyenne est plusieurs fois plus grande, c'est que quelques lectures
+très lentes, de plusieurs dizaines de millisecondes, pèsent plus lourd que toutes les autres.
+
+[regularite.pourquoi]
+Ces interruptions ont plusieurs causes possibles, de la plus fréquente à la plus rare.
+
+Un autre programme utilise la clé en même temps : sous Windows, l'antivirus et l'indexation
+examinent souvent un disque qu'on vient de brancher, et l'Explorateur fabrique des miniatures.
+
+La clé ou le SSD se met en économie d'énergie, ou ralentit parce qu'il chauffe : les boîtiers de
+SSD compacts chauffent beaucoup.
+
+Le contrôleur s'interrompt pour réorganiser sa mémoire (nettoyage, déplacement de données).
+
+Si le phénomène persiste après avoir fermé tout ce qui utilise la clé, il vient d'elle : dans un
+système, il se traduit par des gels courts mais répétés.
+
+[sequentielle]
+On lit de gros blocs de 4 Mo les uns à la suite des autres. C'est le chiffre mis en avant sur les
+emballages (« jusqu'à 150 Mo/s »), et il correspond à la copie d'un gros fichier.
+
+[sequentielle.pourquoi]
+C'est le critère le moins important pour un système : il ne fait presque jamais de longues lectures
+continues. Une clé peut lire à 150 Mo/s en séquentiel et donner pourtant un système très lent.
+
+Ce chiffre sert surtout à repérer une liaison USB 2 (plafond vers 35 à 40 Mo/s) et à vérifier que
+la clé tient à peu près ses promesses.
+
+[zones_vides]
+Une partie des blocs lus ne contenait que des zéros : zones jamais écrites, ou effacées par TRIM.
+
+[zones_vides.pourquoi]
+Beaucoup de contrôleurs savent qu'une zone n'a jamais été écrite et répondent « zéros » sans même
+lire la mémoire : la lecture paraît alors plus rapide qu'elle ne l'est réellement. Sur une clé
+presque vide, les mesures en lecture sont donc optimistes. Elles sont plus représentatives sur une
+clé déjà fabriquée et utilisée.
+
+[memoire]
+La mémoire flash stocke 1, 2, 3 ou 4 bits par cellule : SLC, MLC, TLC, QLC. Plus il y a de bits
+par cellule, plus la mémoire est dense et bon marché, mais plus l'écriture est lente et l'usure
+rapide. Les clés grand public sont aujourd'hui en TLC ou en QLC.
+
+[memoire.pourquoi]
+Aucune clé ne déclare son type de mémoire par USB. On le devine en écrivant longtemps : une fois le
+cache rapide rempli (voir « Cache SLC »), le débit tombe à celui de la mémoire réelle, très bas en
+QLC. Cela demande l'analyse complète, qui efface la clé.
+
+[cache_slc]
+Pour paraître rapide, une partie de la mémoire est utilisée en mode SLC (1 bit par cellule), bien
+plus rapide à écrire. Les données y arrivent d'abord, puis le contrôleur les recopie plus tard dans
+la mémoire normale. Les débits annoncés sont mesurés dans ce cache.
+
+[cache_slc.pourquoi]
+Une fois le cache plein, l'écriture s'effondre, parfois à quelques Mo/s. Ce qui compte pour un
+système, c'est donc le débit soutenu et non le débit de pointe. On le voit en écrivant plusieurs
+gigaoctets d'affilée et en traçant le débit : la chute apparaît comme une falaise. Cela demande
+l'analyse complète, qui efface la clé.
+
+[endurance]
+La mémoire flash s'use à chaque effacement. Les fabricants de SSD garantissent un volume total
+d'écriture (TBW, en téraoctets) ; les fabricants de clés, presque jamais. La robustesse en cas de
+coupure ou d'arrachage dépend aussi du contrôleur : une clé bas de gamme peut corrompre sa propre
+table de correspondance.
+
+[endurance.pourquoi]
+Un système écrit en permanence, alors qu'une clé de transfert n'écrit qu'occasionnellement. Une
+clé ordinaire utilisée comme disque système vieillit donc beaucoup plus vite. L'usure ne se lit pas
+par USB (pas de SMART sur les clés) : on ne peut que choisir un modèle conçu pour cela et garder une
+sauvegarde de ses données.
+
+[capacite]
+Certaines clés contrefaites annoncent une grande capacité (128 Go) mais n'en contiennent qu'une
+petite partie (16 Go). Au-delà, elles écrasent en silence les données déjà présentes.
+
+[capacite.pourquoi]
+Pour une clé système chiffrée, ce serait une catastrophe : tout semble fonctionner, puis les
+fichiers se corrompent quelques semaines plus tard. On le détecte en écrivant des marqueurs sur
+toute la surface puis en les relisant. Cela demande l'analyse complète, qui efface la clé.
+
+Une clé contrefaite « replie » ses adresses : au-delà de sa capacité réelle, elle réécrit au
+début. Les marqueurs sont placés à intervalles réguliers (une puissance de deux), si bien qu'un
+marqueur replié retombe sur un marqueur déjà écrit et l'écrase : la relecture le révèle. C'est un
+contrôle par échantillon, en quelques secondes ; une vérification exhaustive (logiciels f3 ou
+H2testw) écrit et relit toute la surface, ce qui prend des heures.
+
+[espace_libre]
+Cette mesure écrit dans un fichier temporaire, sur l'espace libre d'un volume de la clé déjà
+ouvert (une clé Fabrique-Clé démarrée convient aussi). Elle ne touche à aucun fichier existant et
+ne demande pas d'effacer la clé. Le fichier est supprimé automatiquement à la fin, même si
+l'application s'arrête brutalement. On laisse toujours au moins 10 % de la place libre.
+
+Elle mesure l'écriture aléatoire de 4 Ko, les écritures synchronisées, les lectures sur données
+réelles et une longue écriture (cache SLC), mais à travers le système de fichiers, et le
+chiffrement s'il y en a un : les chiffres sont un peu moins bons que sur le disque brut, mais plus
+proches de l'usage réel. La capacité réelle, elle, demande l'analyse complète.
+
+La longue écriture s'arrête quand la place permise est remplie : sur une clé presque pleine, elle
+peut ne pas atteindre la fin du cache SLC.
+
+[analyse]
+L'analyse complète écrit sur la clé : elle l'efface entièrement. Elle sert à évaluer une clé avant
+de l'adopter, ou à comparer des modèles. Elle enchaîne cinq tests :
+
+1. Capacité réelle : des marqueurs sur toute la surface, puis relus (contrefaçons).
+
+2. Écritures aléatoires de 4 Ko, une à la fois puis plusieurs à la fois : le critère principal.
+
+3. Écritures synchronisées : chaque écriture attend d'être en sécurité, comme le font le journal
+du système ou un navigateur qui enregistre son historique.
+
+4. Longue écriture séquentielle : la courbe du débit montre le cache SLC se remplir.
+
+5. Lectures aléatoires sur les données écrites : une mesure réaliste, sans zones vides.
+
+À la fin, la clé est laissée vide, sans partition : il faut la fabriquer (onglet « Fabriquer une
+clé ») ou la reformater pour s'en resservir. L'usure causée par le test est négligeable : quelques
+gigaoctets écrits, sur une clé qui en encaissera des centaines.
+
+[ecriture_aleatoire]
+On écrit des blocs de 4 Ko à des emplacements tirés au hasard sur toute la clé, pendant quelques
+secondes, d'abord un à la fois, puis plusieurs à la fois. Chaque bloc a un contenu différent, pour
+que la clé ne puisse ni le compresser ni reconnaître une donnée déjà écrite.
+
+[ecriture_aleatoire.pourquoi]
+C'est le critère qui sépare le plus les clés pour un système : le système de fichiers, le journal,
+le cache du navigateur, les réglages du bureau écrivent sans cesse de petits blocs éparpillés.
+
+La mémoire flash ne sait pas réécrire un petit bloc sur place : elle efface et réécrit des blocs
+bien plus grands (plusieurs Mo). Un contrôleur de SSD absorbe ces petites écritures dans sa
+mémoire tampon et les regroupe ; un contrôleur de clé ordinaire réécrit à chaque fois un grand
+bloc, et tombe à quelques centaines d'écritures par seconde, voire moins. C'est la frontière
+entre une clé de catégorie B (moins de 2 Mo/s) et une clé de catégorie C (plus de 10 Mo/s).
+
+[ecriture_synchro]
+Une écriture synchronisée ne rend la main qu'une fois la donnée réellement inscrite dans la
+mémoire flash, et non simplement confiée à la clé. On écrit un bloc de 4 Ko, on demande la
+synchronisation, on recommence, et on mesure le temps de chaque aller-retour.
+
+[ecriture_synchro.pourquoi]
+Les programmes qui ne doivent rien perdre en cas de coupure (journal du système de fichiers,
+gestionnaire de paquets, navigateur, base de données) attendent cette confirmation. Pendant ce
+temps, ils sont bloqués, et l'interface avec eux : c'est ce qui fige le bureau.
+
+Un bon SSD répond en une fraction de milliseconde ; une clé ordinaire peut demander 10 ms ou plus
+à chaque fois, soit moins de cent écritures sûres par seconde.

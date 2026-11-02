@@ -78,6 +78,19 @@ graisses supplémentaires des polices Noto) : 1 893 Mo (run 41304716205), puis `
       et Linux (Zorin, assistant pkexec)
 - [x] Apparence soignée (police Inter, thèmes clair/sombre, cartes), icône de fenêtre
 - [x] Téléchargement parallèle avec reprise après coupure (repli sur un seul flux)
+- [x] Onglet **Diagnostic**, étape 1 (lecture seule) : identification de la clé, mesures en lecture
+      (séquentielle, aléatoire 4 Ko une et 8 à la fois, latences), fiches explicatives — 2026-11-02
+- [ ] Diagnostic sur vraies clés (Linux et Windows) : SanDisk 3.2 de l'essai du 01/11, SSD SSK, une clé
+      bas de gamme ; calibrer les seuils de `interpretation.rs`
+- [x] Diagnostic, étape 2 : analyse complète **destructive** (confirmation par n° de série) : capacité
+      réelle (marqueurs), écriture aléatoire 4 Ko, écritures synchronisées, longue écriture et courbe
+      de débit (cache SLC), lecture sur données écrites ; catégorie A–D mesurée — 2026-11-02
+- [x] Diagnostic : mesure d'écriture sur l'espace libre (fichier d'essai, sans effacer) ; clé système en
+      cours proposée au diagnostic (Linux) — 2026-11-02
+- [x] Essais réels sous Windows : SSD WD SN350 en boîtier RTL9210 (lectures irrégulières → fiche
+      « Régularité »), SanDisk 3.2 Gen 1 (BOT, lectures régulières ~2 000/s, catégorie A/B en lecture)
+- [ ] Vérifier le repli `run0` (application lancée depuis une clé Fabrique-Clé, sans pkexec)
+- [ ] Diagnostic, étape 3 : rapport exporté (texte/Markdown) pour comparer des modèles
 - [ ] Icône de l'exécutable Windows (ressource .ico)
 - [ ] Signature de code Windows (SmartScreen) : à évaluer (payant)
 

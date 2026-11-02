@@ -7,12 +7,23 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{lister, ouvrir};
+pub use linux::{
+    creer_fichier_essai, emplacements, identifier, lister, lister_systeme_usb, ouvrir,
+    ouvrir_ecriture, ouvrir_lecture,
+};
 
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{lister, ouvrir};
+pub use windows::{
+    creer_fichier_essai, emplacements, identifier, lister, ouvrir, ouvrir_ecriture, ouvrir_lecture,
+};
+
+/// Windows : le disque système n'est jamais une clé USB.
+#[cfg(windows)]
+pub fn lister_systeme_usb() -> Vec<Disque> {
+    Vec::new()
+}
 
 #[cfg(not(any(target_os = "linux", windows)))]
 pub fn lister() -> Result<Vec<Disque>, String> {
@@ -21,6 +32,41 @@ pub fn lister() -> Result<Vec<Disque>, String> {
 #[cfg(not(any(target_os = "linux", windows)))]
 pub fn ouvrir(_: &Disque) -> Result<Box<dyn crate::ecriture::Cible>, String> {
     Err("système non pris en charge".into())
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn ouvrir_lecture(_: &Disque) -> Result<(std::fs::File, bool), String> {
+    Err("système non pris en charge".into())
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn ouvrir_ecriture(_: &Disque) -> Result<(std::fs::File, bool), String> {
+    Err("système non pris en charge".into())
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn lister_systeme_usb() -> Vec<Disque> {
+    Vec::new()
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn emplacements(_: &Disque) -> Vec<Emplacement> {
+    Vec::new()
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn creer_fichier_essai(
+    _: &std::path::Path,
+    _: u32,
+) -> Result<(Vec<std::fs::File>, bool), String> {
+    Err("système non pris en charge".into())
+}
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn identifier(_: &Disque) -> crate::diagnostic::materiel::Materiel {
+    Default::default()
+}
+
+/// Dossier d'un volume monté de la clé, où l'on peut écrire un fichier d'essai.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Emplacement {
+    pub dossier: std::path::PathBuf,
+    /// Espace libre disponible, en octets.
+    pub libre: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -52,6 +98,16 @@ impl Disque {
             taille_lisible(self.taille),
             self.chemin
         )
+    }
+
+    /// Comme [`Disque::retrouver`], en acceptant aussi la clé qui porte le système en cours :
+    /// réservé aux mesures qui n'effacent rien (lecture, fichier d'essai).
+    pub fn retrouver_diagnostic(&self) -> Result<(), String> {
+        if lister_systeme_usb().contains(self) {
+            Ok(())
+        } else {
+            self.retrouver()
+        }
     }
 
     /// Le même disque est-il toujours branché, identique (chemin, série et taille) ?
