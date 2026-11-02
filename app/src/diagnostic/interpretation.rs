@@ -441,7 +441,37 @@ fn trim(m: &Materiel) -> Fiche {
     }
 }
 
-fn liaison(m: &Materiel, mes: Option<&Mesures>) -> Fiche {
+/// Débit utile maximal d'une liaison USB (Mo/s), une fois retirés les surcoûts du protocole.
+fn plafond_liaison(mbps: u32) -> f64 {
+    match mbps {
+        0..=480 => 42.0,
+        481..=5000 => 450.0,
+        5001..=10000 => 1000.0,
+        _ => 2000.0,
+    }
+}
+
+/// Plus haut débit mesuré (lecture séquentielle, écriture longue), en Mo/s.
+fn debit_max(mes: Option<&Mesures>, an: Option<&Analyse>) -> f64 {
+    let lu = mes.map_or(0.0, |x| x.sequentielle.mo_s);
+    let ecrit = an.map_or(0.0, |a| a.longue.debit_debut.max(a.longue.mo_s));
+    lu.max(ecrit)
+}
+
+/// Le débit `v` (Mo/s) atteint presque le plafond de la liaison : c'est elle qui limite.
+fn plafonne(m: &Materiel, v: f64) -> bool {
+    m.vitesse_mbps
+        .is_some_and(|l| l > 480 && v >= 0.75 * plafond_liaison(l))
+}
+
+/// La puce identifiée (table de l'application) sait faire l'USB 3.2 Gen 2 (10 Gbit/s).
+fn puce_gen2(m: &Materiel) -> bool {
+    m.vid
+        .and_then(|v| identification(v, m.pid))
+        .is_some_and(|f| f.nom.contains("Gen 2"))
+}
+
+fn liaison(m: &Materiel, mes: Option<&Mesures>, an: Option<&Analyse>) -> Fiche {
     let norme = m
         .version_usb
         .as_deref()
@@ -458,18 +488,37 @@ fn liaison(m: &Materiel, mes: Option<&Mesures>) -> Fiche {
                 "{norme} Elle est bridée en USB 2 : essayez un autre port (souvent bleu), sans rallonge ni concentrateur."
             ),
         ),
-        Some(v) => fiche(
-            "liaison",
-            "Liaison USB",
-            nom_vitesse(v),
-            Certitude::Lu,
-            if v >= 5000 {
+        Some(v) => {
+            let mut appr = if v >= 5000 {
                 Appreciation::Bon
             } else {
                 Appreciation::Faible
-            },
-            norme,
-        ),
+            };
+            let mut commentaire = norme;
+            let max = debit_max(mes, an);
+            if plafonne(m, max) {
+                commentaire += &format!(
+                    " Les débits mesurés (jusqu'à {} Mo/s) atteignent presque le plafond de cette \
+                     liaison (≈ {} Mo/s) : c'est elle qui les limite, pas la mémoire.",
+                    dec(max),
+                    dec(plafond_liaison(v))
+                );
+                if v <= 5000 && puce_gen2(m) {
+                    appr = Appreciation::Moyen;
+                    commentaire += " La puce sait faire l'USB 3.2 Gen 2 (10 Gbit/s) : un port \
+                                    10 Gbit/s (marqué « SS10 », souvent rouge) et le câble \
+                                    d'origine iraient plus vite.";
+                }
+            }
+            fiche(
+                "liaison",
+                "Liaison USB",
+                nom_vitesse(v),
+                Certitude::Lu,
+                appr,
+                commentaire,
+            )
+        }
         None => match mes {
             Some(x) if x.sequentielle.mo_s > 0.0 && x.sequentielle.mo_s <= 42.0 => fiche(
                 "liaison",
@@ -670,7 +719,7 @@ fn appr_soutenu(v: f64) -> Appreciation {
     }
 }
 
-fn cache_slc(a: &Analyse) -> Fiche {
+fn cache_slc(a: &Analyse, m: &Materiel) -> Fiche {
     let l = &a.longue;
     match l.chute_apres {
         Some(b) => fiche(
@@ -699,17 +748,45 @@ fn cache_slc(a: &Analyse) -> Fiche {
             appr_soutenu(l.mo_s),
             format!(
                 "{} Mo/s en moyenne (début {}, fin {}). Le cache est plus grand que ce qui a été \
-                 écrit, ou la clé n'en a pas : une écriture plus longue le dirait.",
+                 écrit, ou la clé n'en a pas : une écriture plus longue le dirait.{}",
                 dec(l.mo_s),
                 dec(l.debit_debut),
-                dec(l.debit_fin)
+                dec(l.debit_fin),
+                if plafonne(m, l.mo_s) {
+                    " Débit plafonné par la liaison USB (voir « Liaison USB »)."
+                } else {
+                    ""
+                }
             ),
         ),
     }
 }
 
-fn memoire(a: &Analyse) -> Fiche {
+fn memoire(a: &Analyse, m: &Materiel) -> Fiche {
     let v = debit_soutenu(a);
+    // Pas de chute à un débit de SSD : seul le cache a été mesuré (et peut-être seulement la
+    // liaison USB). Le débit après le cache, qui trahit le type de mémoire, reste inconnu.
+    if a.longue.chute_apres.is_none() && v >= 200.0 {
+        return fiche(
+            "memoire",
+            "Type de mémoire flash",
+            "non déterminé : le cache SLC n'a pas été rempli",
+            Certitude::Deduit,
+            Appreciation::Neutre,
+            format!(
+                "{} écrits à {} Mo/s sans ralentir : le débit après le cache, qui trahit le type de \
+                 mémoire, n'a pas été atteint. Une écriture plus longue (réglage du Diagnostic) le \
+                 dirait.{}",
+                taille_lisible(a.longue.octets),
+                dec(v),
+                if plafonne(m, v) {
+                    " Ce débit est d'ailleurs celui de la liaison USB, pas de la mémoire."
+                } else {
+                    ""
+                }
+            ),
+        );
+    }
     // Cache SLC rapide (débit de SSD) qui retombe bas : c'est le profil d'un SSD QLC (ou TLC
     // sans DRAM), pas d'un SSD TLC ordinaire qui garde 150 Mo/s ou plus après le cache.
     let ssd_cache_lent = a.longue.chute_apres.is_some() && a.longue.debit_debut >= 200.0;
@@ -788,11 +865,11 @@ pub fn fiches(
         }
     }
     f.push(trim(m));
-    f.push(liaison(m, mes));
+    f.push(liaison(m, mes, an));
     match an {
         Some(a) => {
-            f.push(cache_slc(a));
-            f.push(memoire(a));
+            f.push(cache_slc(a, m));
+            f.push(memoire(a, m));
         }
         None => {
             f.push(non_mesure("cache_slc", "Cache SLC et débit soutenu"));
@@ -987,7 +1064,7 @@ pub fn resume(d: &Disque, m: &Materiel, mes: Option<&Mesures>, an: Option<&Analy
             s += "\nAttention : écritures passées par le cache du système, mesures peu fiables.\n";
         }
         if !a.longue.points.is_empty() {
-            s += "\nÉcriture longue (Go écrits ; Mo/s) :\n";
+            s += "\nÉcriture longue (Go écrits ; Mo/s ; un point sur 4) :\n";
             for p in a.longue.points.iter().step_by(4) {
                 s += &format!("{:.2} ; {:.0}\n", p[0], p[1]);
             }
@@ -1145,12 +1222,45 @@ mod tests {
         let v = f.iter().find(|f| f.cle == "memoire").unwrap();
         assert!(v.valeur.starts_with("SSD à grand cache"), "{}", v.valeur);
         assert_eq!(v.appreciation, Appreciation::Moyen);
-        // Sans chute, un débit moyen de 300 Mo/s reste « mémoire de SSD ».
+        // Sans chute à 354 Mo/s (SSK SM2320 sur 63,8 Go) : seul le cache a été mesuré.
         b.longue.chute_apres = None;
-        b.longue.mo_s = 300.0;
+        b.longue.mo_s = 354.0;
+        b.longue.debit_debut = 355.0;
+        b.longue.debit_fin = 355.0;
         let f = fiches(&m, 32_000_000_000, None, Some(&b));
         let v = f.iter().find(|f| f.cle == "memoire").unwrap();
-        assert!(v.valeur.contains("TLC ou meilleure"), "{}", v.valeur);
+        assert!(v.valeur.starts_with("non déterminé"), "{}", v.valeur);
+        assert_eq!(v.appreciation, Appreciation::Neutre);
+        // Même mesure, liaison 5 Gbit/s et puce Gen 2 : débits plafonnés par la liaison.
+        let ssk = Materiel {
+            vid: Some(0x090c),
+            pid: Some(0x2320),
+            vitesse_mbps: Some(5000),
+            ..Default::default()
+        };
+        let f = fiches(&ssk, 1_000_000_000_000, None, Some(&b));
+        let par = |c: &str| f.iter().find(|f| f.cle == c).unwrap().clone();
+        let l = par("liaison");
+        assert!(l.commentaire.contains("plafond"), "{}", l.commentaire);
+        assert!(l.commentaire.contains("Gen 2"), "{}", l.commentaire);
+        assert_eq!(l.appreciation, Appreciation::Moyen);
+        assert!(par("cache_slc").commentaire.contains("plafonné"));
+        assert!(par("memoire").commentaire.contains("liaison USB"));
+        // En 10 Gbit/s, 354 Mo/s ne touchent pas le plafond.
+        let ssk10 = Materiel {
+            vitesse_mbps: Some(10000),
+            ..ssk
+        };
+        let f = fiches(&ssk10, 1_000_000_000_000, None, Some(&b));
+        let l = f.iter().find(|f| f.cle == "liaison").unwrap();
+        assert!(!l.commentaire.contains("plafond"), "{}", l.commentaire);
+        assert_eq!(l.appreciation, Appreciation::Bon);
+        // Clé lente sans cache (25 Mo/s constants) : le débit moyen reste le débit soutenu.
+        b.longue.mo_s = 25.0;
+        b.longue.debit_debut = 25.0;
+        let f = fiches(&m, 32_000_000_000, None, Some(&b));
+        let v = f.iter().find(|f| f.cle == "memoire").unwrap();
+        assert!(v.valeur.contains("QLC"), "{}", v.valeur);
         // SSD : 10 000 écritures par seconde (41 Mo/s).
         let a = analyse(10_000.0, 300, true);
         assert!(estimation(&m, None, Some(&a)).0.starts_with("Catégorie D"));

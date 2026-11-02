@@ -310,6 +310,10 @@ pub fn telecharger(
         }
         return Err(if e == ANNULE {
             ANNULE.into()
+        } else if disque_plein(&e) {
+            format!(
+                "Téléchargement interrompu : disque plein ({e}). Libérez de la place, puis relancez."
+            )
         } else {
             format!("Téléchargement interrompu ({e}). Relancez : il reprendra où il s'est arrêté.")
         });
@@ -318,6 +322,11 @@ pub fn telecharger(
         .map_err(|e| format!("écriture dans le cache : {e}"))?;
     let _ = fs::remove_file(&chemin_etat);
     Ok(())
+}
+
+/// Erreur « plus de place » (Linux : ENOSPC = 28 ; Windows : ERROR_DISK_FULL = 112).
+fn disque_plein(e: &str) -> bool {
+    e.contains("(os error 28)") || e.contains("(os error 112)")
 }
 
 #[cfg(test)]
@@ -508,7 +517,13 @@ mod tests {
         // La sonde passe, puis chaque morceau est coupé (proxy capricieux) : repli demandé.
         let (url, _) = serveur(donnees(500_000), true, (1..1000).collect());
         let dest = dossier("repli").join("img");
-        let e = telecharger(&ureq::Agent::new_with_defaults(), &[url], &dest, reglages(), &Muet);
+        let e = telecharger(
+            &ureq::Agent::new_with_defaults(),
+            &[url],
+            &dest,
+            reglages(),
+            &Muet,
+        );
         assert_eq!(e.unwrap_err(), NON_PRIS_EN_CHARGE);
     }
 

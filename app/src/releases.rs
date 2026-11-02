@@ -152,10 +152,126 @@ pub fn lister_versions() -> Result<Vec<Version>, String> {
     }
 }
 
-pub fn dossier_cache() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("fabrique-cle")
+/// Dossiers possibles pour le cache, par ordre de préférence. Sous Linux, `~/.cache` peut être en
+/// RAM et petit (sur une clé Fabrique-Clé : tmpfs de 1 Gio, trop petit pour l'image) :
+/// `~/.local/share` et `/var/tmp` sont sur disque.
+fn dossiers_cache() -> Vec<PathBuf> {
+    let mut bases = vec![dirs::cache_dir(), dirs::data_local_dir()];
+    if cfg!(unix) {
+        bases.push(Some(PathBuf::from("/var/tmp")));
+    }
+    bases.push(Some(std::env::temp_dir()));
+    let mut v: Vec<PathBuf> = Vec::new();
+    for d in bases.into_iter().flatten() {
+        let d = d.join("fabrique-cle");
+        if !v.contains(&d) {
+            v.push(d);
+        }
+    }
+    v
+}
+
+/// Espace disponible pour l'utilisateur dans `dossier` ; `None` si inconnu.
+#[cfg(target_os = "linux")]
+fn espace_libre(dossier: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dossier.as_os_str().as_bytes()).ok()?;
+    // SAFETY : chaîne C valide, structure de sortie possédée.
+    let mut v: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut v) } != 0 {
+        return None;
+    }
+    Some(v.f_bavail as u64 * v.f_frsize as u64)
+}
+
+#[cfg(windows)]
+fn espace_libre(dossier: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let large: Vec<u16> = dossier.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut libre = 0u64;
+    // SAFETY : chaîne terminée par un zéro ; les sorties facultatives sont nulles.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            large.as_ptr(),
+            &mut libre,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(libre)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn espace_libre(_: &Path) -> Option<u64> {
+    None
+}
+
+/// Place réellement occupée par un fichier (un fichier partiel est creux sous Linux).
+fn occupe(chemin: &Path) -> u64 {
+    let Ok(m) = fs::metadata(chemin) else {
+        return 0;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        m.blocks() * 512
+    }
+    #[cfg(not(unix))]
+    {
+        m.len()
+    }
+}
+
+/// Marge laissée libre en plus de l'image (fichier `.bmap`, journal, système).
+const MARGE: u64 = 256 << 20;
+
+/// Choisit le dossier du cache pour l'image `nom` (`besoin` octets, si connu) : celui qui la
+/// contient déjà, sinon le premier qui a la place de la télécharger (en comptant un partiel déjà
+/// présent). `libre` : espace disponible d'un dossier existant.
+fn choisir_dossier(
+    candidats: &[PathBuf],
+    nom: &str,
+    besoin: Option<u64>,
+    libre: impl Fn(&Path) -> Option<u64>,
+) -> Result<PathBuf, String> {
+    if let Some(d) = candidats.iter().find(|d| d.join(nom).is_file()) {
+        return Ok(d.clone());
+    }
+    let mut meilleur = 0u64;
+    for d in candidats {
+        if fs::create_dir_all(d).is_err() {
+            continue;
+        }
+        let (Some(besoin), Some(l)) = (besoin, libre(d)) else {
+            return Ok(d.clone());
+        };
+        let disponible = l + occupe(&d.join(format!("{nom}.partiel")));
+        if disponible >= besoin + MARGE {
+            return Ok(d.clone());
+        }
+        meilleur = meilleur.max(disponible);
+    }
+    Err(format!(
+        "Pas assez de place pour télécharger l'image ({}) : {} disponibles au mieux ({}). \
+         Libérez de la place, ou téléchargez l'image à part et choisissez « Fichier ».",
+        taille_lisible(besoin.unwrap_or(0) + MARGE),
+        taille_lisible(meilleur),
+        candidats
+            .iter()
+            .map(|d| d.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+/// Retire un téléchargement partiel de `nom` laissé dans les autres dossiers possibles (par
+/// exemple dans un `~/.cache` en RAM qu'il remplissait).
+fn retirer_partiels(candidats: &[PathBuf], garde: &Path, nom: &str) {
+    for d in candidats.iter().filter(|d| d.as_path() != garde) {
+        let _ = fs::remove_file(d.join(format!("{nom}.partiel")));
+        let _ = fs::remove_file(d.join(format!("{nom}.partiel.etat")));
+    }
 }
 
 /// Somme SHA-256 d'un fichier, avec progression.
@@ -195,9 +311,11 @@ pub fn lire_somme(contenu: &str) -> Option<String> {
 pub fn telecharger(v: &Version, suivi: &dyn Suivi) -> Result<ImageLocale, String> {
     suivi.etape("Préparation du téléchargement");
     let attendu = lire_somme(&texte(&v.sha256)?).ok_or("fichier .sha256 illisible")?;
-    let dossier = dossier_cache();
-    fs::create_dir_all(&dossier).map_err(|e| format!("{} : {e}", dossier.display()))?;
-    let image = dossier.join(format!("{}.img.zst", &attendu[..16]));
+    let nom = format!("{}.img.zst", &attendu[..16]);
+    let candidats = dossiers_cache();
+    let dossier = choisir_dossier(&candidats, &nom, v.taille, espace_libre)?;
+    retirer_partiels(&candidats, &dossier, &nom);
+    let image = dossier.join(&nom);
     let bmap = dossier.join(format!("{}.img.bmap", &attendu[..16]));
 
     if let Some(url) = &v.bmap {
@@ -336,6 +454,41 @@ pub fn image_locale(chemin: &Path, suivi: &dyn Suivi) -> Result<ImageLocale, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ~/.cache en RAM trop petit (clé Fabrique-Clé : 1 Gio) : le cache va ailleurs.
+    #[test]
+    fn cache_dans_un_dossier_assez_grand() {
+        let base = std::env::temp_dir().join(format!("fabcle-cache-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let (ram, disque) = (base.join("ram"), base.join("disque"));
+        let c = vec![ram.clone(), disque.clone()];
+        const GIO: u64 = 1 << 30;
+        let libre = |d: &Path| Some(if d.ends_with("ram") { GIO } else { 50 * GIO });
+        let image = 1_531_363_340;
+        assert_eq!(
+            choisir_dossier(&c, "a.img.zst", Some(image), libre),
+            Ok(disque.clone())
+        );
+        // Taille inconnue : premier dossier.
+        assert_eq!(
+            choisir_dossier(&c, "a.img.zst", None, libre),
+            Ok(ram.clone())
+        );
+        // Image déjà présente : on la garde où elle est.
+        fs::write(ram.join("a.img.zst"), b"x").unwrap();
+        assert_eq!(
+            choisir_dossier(&c, "a.img.zst", Some(image), libre),
+            Ok(ram.clone())
+        );
+        // Nulle part assez de place : message clair, sans « relancez ».
+        let e = choisir_dossier(&c, "b.img.zst", Some(image), |_| Some(GIO)).unwrap_err();
+        assert!(e.starts_with("Pas assez de place"), "{e}");
+        // Le partiel abandonné dans le petit dossier est retiré.
+        fs::write(ram.join("b.img.zst.partiel"), b"x").unwrap();
+        retirer_partiels(&c, &disque, "b.img.zst");
+        assert!(!ram.join("b.img.zst.partiel").exists());
+        let _ = fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn releases_entieres_ou_en_morceaux() {
