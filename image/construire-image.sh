@@ -349,6 +349,20 @@ chroot "$MNT" sh -c '
   echo "-- plus gros pilotes :"; du -sm "$r"/usr/lib/modules/*/kernel/drivers/* 2>/dev/null | sort -rn | head -12 | sed "s|$r/usr/lib/modules/[^/]*/kernel/||"
   echo "-- sous-dossiers de drivers/gpu :"; du -sm "$r"/usr/lib/modules/*/kernel/drivers/gpu/drm/* 2>/dev/null | sort -rn | head -8 | sed "s|$r/usr/lib/modules/[^/]*/kernel/||"
   rm -rf "$d"'
+# Garde-fous de l'allègement (hook zz-fabrique-cle-allege) : ni pilotes graphiques ni réseau,
+# mais toujours de quoi ouvrir le volume (dm-crypt, USB, clavier), et une taille raisonnable.
+LISTE=$(chroot "$MNT" lsinitramfs "/$K")
+if grep -qE 'kernel/drivers/(gpu|net)/' <<<"$LISTE"; then echo "ERREUR : pilotes graphiques ou réseau dans l'initramfs"; exit 1; fi
+INTEGRES=$(cat "$MNT"/usr/lib/modules/"${K#boot/initrd.img-}"/modules.builtin 2>/dev/null || true)
+for m in dm-crypt usb-storage uas xhci-pci hid-generic; do
+  for v in "$m" "${m//-/_}"; do
+    grep -qE "/$v\.ko" <<<"$LISTE"$'\n'"$INTEGRES" && continue 2
+  done
+  echo "ERREUR : $m ni dans l'initramfs ni intégré au noyau"; exit 1
+done
+TAILLE_INITRD=$(du -m "$MNT/$K" | cut -f1)
+[ "$TAILLE_INITRD" -le 70 ] || { echo "ERREUR : initramfs de $TAILLE_INITRD Mo (> 70)"; exit 1; }
+echo "initramfs allégé : $TAILLE_INITRD Mo"
 ls -l "$MNT/boot/efi/EFI/BOOT" "$MNT/boot/efi/EFI/debian"
 cmp "$MNT/boot/efi/EFI/BOOT/BOOTX64.EFI" "$MNT/boot/efi/EFI/debian/shimx64.efi" && echo "BOOTX64.EFI = shim"
 cmp "$MNT/boot/efi/EFI/BOOT/grubx64.efi" "$MNT/boot/efi/EFI/debian/grubx64.efi" && echo "grubx64.efi identique à EFI/debian"
