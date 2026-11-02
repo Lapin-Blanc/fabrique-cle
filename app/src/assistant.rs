@@ -1,6 +1,7 @@
 //! Linux : l'interface tourne avec les droits de l'utilisateur ; seule l'écriture sur la clé
 //! demande root. L'application se relance alors elle-même, sans fenêtre, avec
-//! `pkexec <application> --assistant` (fenêtre d'authentification du bureau).
+//! `pkexec <application> --assistant` (fenêtre d'authentification du bureau). Sans pkexec (paquet
+//! séparé sous Debian, souvent absent), `run0` de systemd (≥ 256), qui passe aussi par polkit.
 //!
 //! Deux usages : `--assistant` (écrire une clé) et `--diagnostic` (mesures en lecture seule de
 //! l'onglet Diagnostic, qui exigent aussi root pour lire le périphérique brut).
@@ -41,6 +42,15 @@ pub fn diagnostiquer(d: &Disque, suivi: &dyn Suivi) -> Result<Mesures, String> {
     serde_json::from_str(&r).map_err(|x| format!("réponse de l'assistant illisible : {x}"))
 }
 
+/// Programme qui relance l'application en root après authentification graphique (polkit) :
+/// pkexec, sinon run0 (systemd ≥ 256, sans terminal : entrée et sortie passent par des tubes).
+fn elevateur() -> Option<&'static str> {
+    let chemins = std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into());
+    ["pkexec", "run0"]
+        .into_iter()
+        .find(|p| std::env::split_paths(&chemins).any(|d| d.join(p).is_file()))
+}
+
 /// Lance l'assistant avec `option` et la demande `json`, et relaie ses messages au suivi.
 fn executer(option: &str, json: &str, suivi: &dyn Suivi) -> Result<String, String> {
     // Dans une AppImage, l'exécutable courant est dans un montage FUSE que root ne peut pas lire :
@@ -49,19 +59,19 @@ fn executer(option: &str, json: &str, suivi: &dyn Suivi) -> Result<String, Strin
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::current_exe().ok())
         .ok_or("chemin de l'application introuvable")?;
+    let elevateur = elevateur().ok_or(
+        "Ni pkexec ni run0 ne sont installés : impossible d'obtenir les droits administrateur. \
+         Installez le paquet « pkexec » (sudo apt install pkexec), ou lancez l'application avec sudo.",
+    )?;
     suivi.etape("Autorisation administrateur (mot de passe du PC)");
-    let mut enfant = Command::new("pkexec")
+    let mut enfant = Command::new(elevateur)
         .arg(&exe)
         .arg(option)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|x| {
-            format!(
-                "pkexec introuvable ({x}) : lancez l'application avec « sudo » pour écrire la clé."
-            )
-        })?;
+        .map_err(|x| format!("lancement de {elevateur} : {x}"))?;
 
     let mut entree = enfant.stdin.take().unwrap();
     writeln!(entree, "{json}").map_err(|x| format!("assistant : {x}"))?;
