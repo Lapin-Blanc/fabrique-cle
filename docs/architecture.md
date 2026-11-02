@@ -113,6 +113,13 @@ Tests : `cd app && cargo test` (parcours complet sur fichiers : GPT + FAT32 comp
 (ubuntu-22.04, binaire + AppImage) et Windows (`.exe`), en artefacts 14 jours ; sur étiquette `v*`,
 joints à la release de l'image (`fabrique-cle-windows.exe`, `fabrique-cle-linux-x86_64.AppImage`).
 
+**Publication** (`publier.yml`, à la demande, entrée `version`) : job `etiquette` dans l'environnement
+GitHub `release` (règle « Required reviewers » = l'enseignant : rien n'est publié sans son clic
+« Approve ») → étiquette annotée sur `main` + release en pré-version → `image.yml` et `app.yml` appelés
+comme workflows réutilisables (`workflow_call`, entrée `version`), qui joignent leurs fichiers à la
+release. Ils sont appelés directement car une étiquette poussée par un workflow (`GITHUB_TOKEN`) ne
+déclenche aucun autre workflow. Une étiquette `v*` poussée à la main fonctionne toujours.
+
 `image.yml` : push sur `image/**` : construction → test QEMU → compression zstd (`-12 --long=27`) + bmap + sha256 → artefact 7 jours.
 Garde-fou : échec si l'image compressée dépasse 3 Go (signe d'un volume chiffré dans l'image ou de blocs
 libres « sales »). Découpage en `*.part00…` au-delà de 2 000 Mio (limite GitHub : 2 Gio par fichier).

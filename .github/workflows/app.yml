@@ -8,13 +8,21 @@ on:
     paths: ['app/**', '.github/workflows/app.yml']
     tags: ['v*']
   workflow_dispatch:
+  # Appelé par publier.yml : version publiée (l'étiquette, déjà posée par publier.yml)
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
-  FABRIQUE_CLE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+  # Non vide = publier dans la release de cette version (appel par publier.yml, ou étiquette v* poussée)
+  VERSION_PUBLIEE: ${{ inputs.version || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
+  FABRIQUE_CLE_VERSION: ${{ inputs.version || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
 
 jobs:
   linux:
@@ -25,6 +33,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.version || '' }}
 
       - name: Rust stable
         run: rustup update stable --no-self-update && rustup default stable
@@ -64,6 +74,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.version || '' }}
 
       - name: Rust stable
         run: rustup update stable --no-self-update; rustup default stable
@@ -87,7 +99,7 @@ jobs:
           retention-days: 14
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: inputs.version != '' || startsWith(github.ref, 'refs/tags/')
     needs: [linux, windows]
     runs-on: ubuntu-24.04
     steps:
@@ -106,10 +118,10 @@ jobs:
           sha256sum fabrique-cle-* > fabrique-cle-applications.sha256
           # Le workflow de l'image peut créer la release en même temps : réessayer.
           for i in 1 2 3 4 5; do
-            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
+            gh release view "$VERSION_PUBLIEE" >/dev/null 2>&1 && break
             # Toujours en pré-version : l'enseignant la promeut après un essai sur vrai matériel.
-            gh release create "$GITHUB_REF_NAME" --title "Fabrique-Clé $GITHUB_REF_NAME" --prerelease \
+            gh release create "$VERSION_PUBLIEE" --title "Fabrique-Clé $VERSION_PUBLIEE" --prerelease \
               --notes "Image Debian 13 + KDE Plasma (léger), testée dans QEMU avec Secure Boot, et application Fabrique-Clé (Windows : fabrique-cle-windows.exe ; Linux : fabrique-cle-linux-x86_64.AppImage). Pré-version : à valider sur vrai matériel, puis décocher « pre-release » sur GitHub." \
               && break || sleep 10
           done
-          gh release upload "$GITHUB_REF_NAME" * --clobber
+          gh release upload "$VERSION_PUBLIEE" * --clobber

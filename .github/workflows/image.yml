@@ -8,9 +8,19 @@ on:
     paths: ['image/**', '.github/workflows/image.yml']
     tags: ['v*']
   workflow_dispatch:
+  # Appelé par publier.yml : version publiée (l'étiquette, déjà posée par publier.yml)
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
 
 permissions:
   contents: write
+
+env:
+  # Non vide = publier dans la release de cette version (appel par publier.yml, ou étiquette v* poussée)
+  VERSION_PUBLIEE: ${{ inputs.version || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
 
 jobs:
   image:
@@ -18,6 +28,8 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.version || '' }}
 
       - name: Libérer de l'espace disque
         run: |
@@ -38,7 +50,7 @@ jobs:
           ls -l /dev/kvm
 
       - name: Construire l'image
-        run: sudo VERSION="${GITHUB_REF_NAME}" ./image/construire-image.sh image/out/fabrique-cle.img
+        run: sudo VERSION="${VERSION_PUBLIEE:-$GITHUB_REF_NAME}" ./image/construire-image.sh image/out/fabrique-cle.img
 
       - name: Tester l'image dans QEMU
         run: sudo ./image/tester-image.sh image/out/fabrique-cle.img
@@ -78,7 +90,7 @@ jobs:
           ls -l ../publier
 
       - name: Conserver l'image (7 jours)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: env.VERSION_PUBLIEE == ''
         uses: actions/upload-artifact@v5
         with:
           name: fabrique-cle-image
@@ -87,11 +99,11 @@ jobs:
           compression-level: 0
 
       - name: Publier la release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: env.VERSION_PUBLIEE != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
-            gh release create "$GITHUB_REF_NAME" --title "Fabrique-Clé $GITHUB_REF_NAME" --prerelease \
+          gh release view "$VERSION_PUBLIEE" >/dev/null 2>&1 || \
+            gh release create "$VERSION_PUBLIEE" --title "Fabrique-Clé $VERSION_PUBLIEE" --prerelease \
               --notes "Image Debian 13 + KDE Plasma (léger), testée dans QEMU avec Secure Boot, et application Fabrique-Clé (Windows : fabrique-cle-windows.exe ; Linux : fabrique-cle-linux-x86_64.AppImage). Pré-version : à valider sur vrai matériel, puis décocher « pre-release » sur GitHub."
-          gh release upload "$GITHUB_REF_NAME" image/publier/* --clobber
+          gh release upload "$VERSION_PUBLIEE" image/publier/* --clobber
