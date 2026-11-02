@@ -264,17 +264,19 @@ chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Opt
   intel-microcode amd64-microcode \
   kde-plasma-desktop sddm plasma-nm network-manager \
   pipewire-audio wireplumber bluez bluedevil \
-  task-french brave-browser curl plasma-wallpapers-addons konqueror- \
+  task-french brave-browser curl plasma-wallpapers-addons konqueror- firefox-esr- chromium- \
   firmware-linux firmware-misc-nonfree \
   firmware-intel-graphics firmware-intel-misc firmware-mediatek firmware-nvidia-graphics \
   firmware-amd-graphics firmware-iwlwifi firmware-realtek firmware-atheros \
   firmware-brcm80211 firmware-sof-signed \
   fonts-noto-extra- fonts-noto-cjk-extra- fonts-noto-ui-extra-
-# (« paquet- » = ne pas installer.) Ces trois paquets, recommandés via fonts-noto, n'apportent que des
+# (« paquet- » = ne pas installer.) Navigateurs : Brave seul ; webext-plasma-browser-integration
+# (recommandé par Plasma) recommande « firefox-esr | firefox | chromium » : les exclure tous deux.
+# Polices : ces trois paquets, recommandés via fonts-noto, n'apportent que des
 # graisses et largeurs supplémentaires (~600 Mio) : toutes les écritures restent couvertes par
 # fonts-noto-core, fonts-noto-cjk, fonts-noto-ui-core et fonts-noto-mono.
 for p in kde-standard kde-full task-kde-desktop fonts-noto-extra fonts-noto-cjk-extra fonts-noto-ui-extra \
-         konqueror firefox-esr; do
+         konqueror firefox-esr chromium; do
   if chroot "$MNT" dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok'; then
     echo "ERREUR : $p installé"; exit 1
   fi

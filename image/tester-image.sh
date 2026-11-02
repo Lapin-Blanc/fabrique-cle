@@ -179,7 +179,7 @@ verifier "plus de fichier de clé temporaire" "[ ! -e $MNT/etc/cryptsetup-keys.d
 verifier "machine-id générée au démarrage" "[ -s $MNT/etc/machine-id ]"
 verifier "synchronisation de l'heure (systemd-timesyncd) activée" "[ -L $MNT/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service ]"
 installe() { grep -A1 -x "Package: $1" $MNT/var/lib/dpkg/status | grep -q 'Status: install ok installed'; }
-verifier "Brave installé, seul navigateur (ni Firefox ni Konqueror)" "$(declare -f installe); installe brave-browser && ! installe firefox-esr && ! installe konqueror"
+verifier "Brave installé, seul navigateur (ni Firefox ni Konqueror)" "$(declare -f installe); installe brave-browser && ! installe firefox-esr && ! installe konqueror && ! installe chromium"
 verifier "Brave navigateur par défaut (mimeapps, Plasma)" "grep -q 'x-scheme-handler/https=brave-browser.desktop' $MNT/etc/xdg/mimeapps.list && grep -q 'BrowserApplication=brave-browser.desktop' $MNT/etc/xdg/kdeglobals"
 verifier "fond « image du jour » (plugin + lancement à la 1re session)" "$(declare -f installe); installe plasma-wallpapers-addons && [ -x $MNT/usr/local/bin/fabrique-cle-fond-du-jour ] && [ -e $MNT/etc/xdg/autostart/fabrique-cle-fond-du-jour.desktop ]"
 verifier "curl installé" "$(declare -f installe); installe curl"
