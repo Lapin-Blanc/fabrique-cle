@@ -260,7 +260,7 @@ chroot "$MNT" apt-get update -qq
 chroot "$MNT" env DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold \
   linux-image-amd64 cryptsetup cryptsetup-initramfs lvm2 \
   grub-efi-amd64 grub-efi-amd64-signed shim-signed \
-  sudo pkexec zram-tools cloud-guest-utils gdisk whiptail systemd-timesyncd \
+  sudo zram-tools cloud-guest-utils gdisk whiptail systemd-timesyncd \
   intel-microcode amd64-microcode \
   kde-plasma-desktop sddm plasma-nm network-manager \
   pipewire-audio wireplumber bluez bluedevil \
@@ -281,9 +281,6 @@ for p in kde-standard kde-full task-kde-desktop fonts-noto-extra fonts-noto-cjk-
     echo "ERREUR : $p installé"; exit 1
   fi
 done
-# pkexec : l'application Fabrique-Clé, lancée depuis la clé, en a besoin pour obtenir les droits
-# administrateur (fabriquer une autre clé, mesures du diagnostic). Paquet séparé de polkitd.
-chroot "$MNT" test -x /usr/bin/pkexec || { echo "ERREUR : pkexec absent"; exit 1; }
 
 # ---------------------------------------------------------------------------
 journal "Service de premier démarrage"
