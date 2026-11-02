@@ -79,6 +79,12 @@
   `device_bytes` est la position absolue (`rh->progress = rh->offset`) : la jauge repart du bon endroit.
 - Jauge dans un tube (`cryptsetup | filtre | whiptail --gauge`) : si l'affichage meurt, SIGPIPE
   interromprait le chiffrement → le filtre ignore SIGPIPE et lit tout ; `whiptail … || true`.
+- **whiptail tronque sans prévenir** (vu sur la capture `jauge.ppm` de la CI, reproduit avec un émulateur
+  de terminal `pyte`) : `--gauge` fixe la hauteur de sa zone de texte d'après le texte **initial**, et
+  les mises à jour `XXX` n'ajoutent jamais de lignes → texte initial bourré de lignes vides. La hauteur
+  est calculée **avant** le repli des lignes longues : une ligne repliée fait disparaître la dernière →
+  lignes de moins de 70 caractères. `--infobox` perd ses dernières lignes si la boîte n'est pas assez
+  haute (5 lignes de texte : hauteur 12, pas 10).
 - Une image publiée a une clé maîtresse publique → `cryptsetup reencrypt` obligatoire sur chaque clé.
   Le faire **avant** l'agrandissement (≈ 1 min au lieu de dizaines).
 - **Un volume chiffré dans l'image la rend incompressible** (7,5 Go compressés pour 5,2 Go de système,

@@ -45,13 +45,15 @@ dans_liste() { local v=$1; shift; for x in "$@"; do [ "$v" = "$x" ] && return 0;
 
 # Étape en cours, affichée dans une fenêtre qui reste à l'écran pendant les opérations longues.
 # Les sorties des commandes vont au journal (>&3), pour ne pas recouvrir la fenêtre.
+# whiptail dimensionne sa zone de texte d'après le nombre de lignes AVANT repli : une ligne repliée
+# en fait disparaître une autre. Textes d'étape : moins de 70 caractères, chacun sur sa ligne.
 numero() {  # numero <identifiant> -> « Étape n sur N »
   local i
   for i in "${!ETAPES[@]}"; do [ "${ETAPES[$i]}" = "$1" ] && echo "Étape $((i + 1)) sur ${#ETAPES[@]}"; done
 }
 etape() {  # etape <identifiant> <texte> (identifiants : voir ETAPES)
   journal "$2"
-  whiptail --title "$TITRE" --infobox "$(numero "$1") : $2\n\nNe débranchez pas la clé." 9 74 || true
+  whiptail --title "$TITRE" --infobox "$(numero "$1")\n\n$2\n\nNe débranchez pas la clé." 12 74 || true
 }
 
 # Progression de « cryptsetup reencrypt --progress-json » (une ligne JSON par seconde, même avec
@@ -215,10 +217,12 @@ if [ "$CHIFFRER" = oui ] && ! fait rechiffrement; then
   etape chiffrement "$TEXTE"
   # Jauge : affichée pendant tout le chiffrement. Code de retour : celui de cryptsetup (pipefail ;
   # whiptail neutralisé). Messages d'erreur de cryptsetup au journal, pas par-dessus la jauge.
+  # whiptail --gauge fixe la hauteur de sa zone de texte d'après le texte INITIAL : les mises à jour
+  # (XXX) n'y ajoutent jamais de lignes. D'où un texte initial de 8 lignes, comme celui de la jauge.
   cryptsetup reencrypt --batch-mode --progress-json --progress-frequency 1 \
       --key-file "$CLE_TMP" "${OPTIONS[@]}" "$PART" 2>&3 \
-    | jauge_chiffrement "$(numero chiffrement) : $TEXTE" \
-    | { whiptail --title "$TITRE" --gauge "$TEXTE" 13 74 0 || true; }
+    | jauge_chiffrement "$(numero chiffrement)"$'\n'"$TEXTE" \
+    | { whiptail --title "$TITRE" --gauge "$(numero chiffrement)"$'\n'"$TEXTE"$'\n\n\n\n\n\n' 15 74 0 || true; }
   ENTETE=$(cryptsetup luksDump "$PART")
   grep -E '^\s+cipher:' <<<"$ENTETE" >&3 || true
   grep -qE '^\s+cipher:\s+aes-xts-plain64' <<<"$ENTETE" || echec "volume non chiffré après reencrypt"
