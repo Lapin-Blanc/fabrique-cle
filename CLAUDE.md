@@ -37,7 +37,8 @@ compris) sans rien modifier sur ce PC. Lire dans l'ordre :
 - Toute modification de l'image doit passer le test CI (`tester-image.sh`) avant d'être considérée comme faite.
 - Les scripts restent idempotents et commentés ; le service de premier démarrage doit pouvoir être relancé après une coupure.
 - Aucun secret en clair dans le dépôt ni dans `config.txt` (mot de passe haché ; phrase LUKS saisie au premier démarrage).
-- Commits : identité déjà configurée dans le dépôt (adresse noreply GitHub de Toune-Fabien).
+- Commits : identité configurée dans le dépôt (`git config` local) : « Fabien Toune »,
+  adresse noreply GitHub de Lapin-Blanc (`2578326+Lapin-Blanc@users.noreply.github.com`).
 
 ## Construire / tester
 
