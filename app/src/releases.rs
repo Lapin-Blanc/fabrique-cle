@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const DEPOT: &str = "Toune-Fabien/fabrique-cle";
+pub const DEPOT: &str = "lapin-blanc/fabrique-cle";
 const IMAGE: &str = "fabrique-cle.img.zst";
 
 #[derive(Clone, Debug)]

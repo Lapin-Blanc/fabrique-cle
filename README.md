@@ -5,7 +5,7 @@ utilisable sur n'importe quel PC UEFI (Secure Boot compris), sans toucher au PC 
 Conçu au départ pour des élèves, il s'adresse à toute personne qui veut un Linux nomade,
 chiffré et prêt à l'emploi : on télécharge l'application, on remplit quelques champs, on clique.
 
-**Télécharger :** [dernière version](https://github.com/Toune-Fabien/fabrique-cle/releases) —
+**Télécharger :** [dernière version](https://github.com/lapin-blanc/fabrique-cle/releases) —
 `fabrique-cle-windows.exe` (Windows 10/11) ou `fabrique-cle-linux-x86_64.AppImage` (Linux).
 
 - `image/` : construction de l'image système (Linux, root) — exécutée par GitHub Actions
