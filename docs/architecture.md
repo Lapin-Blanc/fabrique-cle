@@ -147,6 +147,8 @@ polkit), sinon demande d'installer pkexec.
 `app.yml` (push sur `app/**`, sur `main` et les branches `claude/**`) : tests + compilation Linux
 (ubuntu-22.04, binaire + AppImage) et Windows (`.exe`), en artefacts 14 jours ; sur étiquette `v*`,
 joints à la release de l'image (`fabrique-cle-windows.exe`, `fabrique-cle-linux-x86_64.AppImage`).
+Dépendances Rust en cache (`Swatinem/rust-cache`, clé = `Cargo.lock` + version de Rust) : enregistré
+sur `main` seulement, lu par les branches `claude/**`.
 
 **Publication** (`publier.yml`, à la demande, entrée `version`) : job `etiquette` dans l'environnement
 GitHub `release` (règle « Required reviewers » = l'enseignant : rien n'est publié sans son clic

@@ -39,6 +39,14 @@ jobs:
       - name: Rust stable
         run: rustup update stable --no-self-update && rustup default stable
 
+      # Cache des dépendances compilées (~/.cargo et app/target), clé dérivée de Cargo.lock et de la
+      # version de Rust. Seul main enregistre le cache : les branches claude/** le lisent (GitHub leur
+      # donne accès au cache de main) sans encombrer le quota de 10 Go avec un cache par branche.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Tests
         run: cargo test --locked
 
@@ -79,6 +87,14 @@ jobs:
 
       - name: Rust stable
         run: rustup update stable --no-self-update; rustup default stable
+
+      # Cache des dépendances compilées (~/.cargo et app/target), clé dérivée de Cargo.lock et de la
+      # version de Rust. Seul main enregistre le cache : les branches claude/** le lisent (GitHub leur
+      # donne accès au cache de main) sans encombrer le quota de 10 Go avec un cache par branche.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Tests
         run: cargo test --locked
