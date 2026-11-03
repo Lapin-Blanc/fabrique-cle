@@ -548,7 +548,7 @@ mod tests {
 #[test]
 #[ignore]
 fn morceau_reel_github() {
-    let url = "https://github.com/Toune-Fabien/fabrique-cle/releases/download/v2026.11/fabrique-cle.img.zst";
+    let url = "https://github.com/lapin-blanc/fabrique-cle/releases/download/v2026.11/fabrique-cle.img.zst";
     let a = ureq::Agent::config_builder()
         .tls_config(
             ureq::tls::TlsConfig::builder()

@@ -1,6 +1,7 @@
 # CLAUDE.md — Fabrique-Clé
 
-Projet de Fabien Toune (enseignant, EICA, Belgique). Langue de travail : **français** (code commenté en
+Projet de Fabien Toune (enseignant, EICA, Belgique). Dépôt : `lapin-blanc/fabrique-cle`
+(transféré depuis `Toune-Fabien/fabrique-cle`, l'ancienne adresse redirige). Langue de travail : **français** (code commenté en
 français, messages de commit en français). Utilisateur francophone, clavier **belge AZERTY**.
 
 ## Ce qu'est le projet

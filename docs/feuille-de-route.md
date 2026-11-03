@@ -10,7 +10,7 @@
 
 ## État (2026-11-01)
 
-- [x] Dépôt public `Toune-Fabien/fabrique-cle`
+- [x] Dépôt public `lapin-blanc/fabrique-cle`
 - [x] `construire-image.sh` : image 10 Gio, ~5,2 Go utilisés, construite en ~6 min sur GitHub
 - [x] Service de premier démarrage (config.txt ou questions, rechiffrement, agrandissement, compte)
 - [x] `tester-image.sh` : test complet réussi (Secure Boot, USB, NVRAM vierge, 14 vérifications)
